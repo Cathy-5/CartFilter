@@ -1,4 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut as firebaseSignOut
+} from 'firebase/auth';
+import { auth } from './firebase';
 
 const STORAGE_KEY = 'cartfilter-state-v2';
 const SUPPORTED_CURRENCIES = ['SEK', 'EUR', 'USD'];
@@ -14,6 +21,7 @@ const TRANSLATIONS = {
     tagline: 'Parse receipts, compare grocery categories, and keep spending under control.',
     signIn: 'Sign in with Google',
     signOut: 'Sign out',
+    signInError: 'Google sign-in did not complete. Please try again.',
     welcome: 'Smart grocery receipt tracking',
     language: 'Language',
     currency: 'Currency',
@@ -69,6 +77,7 @@ const TRANSLATIONS = {
     tagline: 'Tolka kvitton, jamfor matvarukategorier och hall koll pa kostnaderna.',
     signIn: 'Logga in med Google',
     signOut: 'Logga ut',
+    signInError: 'Google-inloggningen slutfordes inte. Forsok igen igen.',
     welcome: 'Smart kvittosparning for matinkop',
     language: 'Sprak',
     currency: 'Valuta',
@@ -278,6 +287,7 @@ const CartFilter = () => {
   const [ocrText, setOcrText] = useState('');
   const [parseMessage, setParseMessage] = useState('');
   const [parseStatus, setParseStatus] = useState('idle');
+  const [authError, setAuthError] = useState('');
 
   const [formData, setFormData] = useState({
     merchant: '',
@@ -307,6 +317,14 @@ const CartFilter = () => {
       JSON.stringify({ receipts, language, displayCurrency })
     );
   }, [receipts, language, displayCurrency]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+    });
+
+    return unsubscribe;
+  }, []);
 
   const t = useMemo(() => buildTranslator(language), [language]);
   const locale = language === 'sv' ? 'sv-SE' : 'en-US';
@@ -421,12 +439,24 @@ const CartFilter = () => {
     setParseMessage(t('parseSuccess'));
   };
 
-  const handleGoogleSignIn = () => {
-    setUser({ name: 'Demo User', email: 'user@example.com' });
+  const handleGoogleSignIn = async () => {
+    setAuthError('');
+
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error('Google sign-in failed', error);
+      setAuthError(t('signInError'));
+    }
   };
 
-  const handleSignOut = () => {
-    setUser(null);
+  const handleSignOut = async () => {
+    try {
+      await firebaseSignOut(auth);
+    } catch (error) {
+      console.error('Sign-out failed', error);
+    }
   };
 
   if (!user) {
@@ -442,6 +472,7 @@ const CartFilter = () => {
           >
             {t('signIn')}
           </button>
+          {authError && <p className="mt-4 text-sm text-red-600">{authError}</p>}
         </div>
       </div>
     );
