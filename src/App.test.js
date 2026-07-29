@@ -1,8 +1,11 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import CartFilter from './CartFilter';
 
-test('renders learn react link', () => {
+test('renders localized receipt import after sign in', () => {
   render(<CartFilter />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /sign in with google/i }));
+
+  expect(screen.getByRole('heading', { name: /cartfilter/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /import receipt/i })).toBeInTheDocument();
 });

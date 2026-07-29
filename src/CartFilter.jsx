@@ -1,95 +1,446 @@
-import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+
+const STORAGE_KEY = 'cartfilter-state-v2';
+const SUPPORTED_CURRENCIES = ['SEK', 'EUR', 'USD'];
+const EXCHANGE_RATES = {
+  SEK: 1,
+  EUR: 11.4,
+  USD: 10.5
+};
+
+const TRANSLATIONS = {
+  en: {
+    appName: 'CartFilter',
+    tagline: 'Parse receipts, compare grocery categories, and keep spending under control.',
+    signIn: 'Sign in with Google',
+    signOut: 'Sign out',
+    welcome: 'Smart grocery receipt tracking',
+    language: 'Language',
+    currency: 'Currency',
+    importReceipt: 'Import receipt',
+    addManually: 'Add manually',
+    hideForm: 'Hide form',
+    newReceipt: 'New receipt',
+    importTitle: 'OCR receipt import',
+    importDescription: 'Paste OCR text from a photo, PDF, scanner, or notes app and CartFilter will try to extract items, totals, date, and currency.',
+    ocrText: 'OCR text',
+    parseReceipt: 'Parse receipt text',
+    parsing: 'Parsing...',
+    merchant: 'Merchant',
+    date: 'Date',
+    category: 'Category',
+    amount: 'Amount',
+    total: 'Total',
+    saveReceipt: 'Save receipt',
+    cancel: 'Cancel',
+    source: 'Source',
+    parsedFromOcr: 'Parsed from OCR text',
+    manualEntry: 'Manual entry',
+    totalSpent: 'Total spent',
+    receipts: 'Receipts',
+    items: 'items',
+    spendingByCategory: 'Spending by category',
+    recentReceipts: 'Recent receipts',
+    noReceipts: 'No receipts yet',
+    noReceiptsHint: 'Import your first receipt or add one manually to start tracking grocery costs.',
+    ocrReady: 'OCR-ready flow',
+    ocrReadyHint: 'This version parses pasted OCR text and normalizes currencies. Image OCR can plug into the same parser next.',
+    exchangeRateNote: 'Using built-in fallback rates: 1 EUR = 11.4 SEK, 1 USD = 10.5 SEK.',
+    parseSuccess: 'Receipt parsed. Review the extracted fields before saving.',
+    parseError: 'No useful receipt data was found. Try cleaner OCR text or enter the details manually.',
+    groceryFocus: 'Grocery categories',
+    merchantPlaceholder: 'Store or merchant name',
+    ocrPlaceholder: 'Paste OCR text here. Example:\nICA Kvantum\n2026-07-25\nMilk 24.90\nBread 31.50\nTomatoes 19.95\nTotal 76.35 SEK',
+    categories: {
+      meat: 'Meat',
+      vegetables: 'Vegetables',
+      dairy: 'Dairy',
+      grains: 'Grains',
+      pantry: 'Pantry',
+      snacks: 'Snacks',
+      frozen: 'Frozen',
+      beverages: 'Beverages',
+      household: 'Household',
+      other: 'Other'
+    }
+  },
+  sv: {
+    appName: 'CartFilter',
+    tagline: 'Tolka kvitton, jamfor matvarukategorier och hall koll pa kostnaderna.',
+    signIn: 'Logga in med Google',
+    signOut: 'Logga ut',
+    welcome: 'Smart kvittosparning for matinkop',
+    language: 'Sprak',
+    currency: 'Valuta',
+    importReceipt: 'Importera kvitto',
+    addManually: 'Lagg till manuellt',
+    hideForm: 'Dolj formularet',
+    newReceipt: 'Nytt kvitto',
+    importTitle: 'OCR-kvittoimport',
+    importDescription: 'Klistra in OCR-text fran ett foto, en PDF, en scanner eller anteckningar sa forsoker CartFilter hitta varor, total, datum och valuta.',
+    ocrText: 'OCR-text',
+    parseReceipt: 'Tolka kvittotext',
+    parsing: 'Tolkar...',
+    merchant: 'Butik',
+    date: 'Datum',
+    category: 'Kategori',
+    amount: 'Belopp',
+    total: 'Totalt',
+    saveReceipt: 'Spara kvitto',
+    cancel: 'Avbryt',
+    source: 'Kalla',
+    parsedFromOcr: 'Tolkat fran OCR-text',
+    manualEntry: 'Manuell inmatning',
+    totalSpent: 'Totalt spenderat',
+    receipts: 'Kvitton',
+    items: 'varor',
+    spendingByCategory: 'Utgifter per kategori',
+    recentReceipts: 'Senaste kvitton',
+    noReceipts: 'Inga kvitton annu',
+    noReceiptsHint: 'Importera ditt forsta kvitto eller lagg till ett manuellt for att borja folja matkostnader.',
+    ocrReady: 'OCR-redo flode',
+    ocrReadyHint: 'Den har versionen tolkar inklistrad OCR-text och normaliserar valutor. Bild-OCR kan anslutas till samma parser senare.',
+    exchangeRateNote: 'Inbyggda reservkurser anvands: 1 EUR = 11.4 SEK, 1 USD = 10.5 SEK.',
+    parseSuccess: 'Kvitto tolkat. Granska de extraherade falten innan du sparar.',
+    parseError: 'Ingen anvandbar kvittodata hittades. Prova renare OCR-text eller fyll i uppgifterna manuellt.',
+    groceryFocus: 'Matvarukategorier',
+    merchantPlaceholder: 'Butik eller handlare',
+    ocrPlaceholder: 'Klistra in OCR-text har. Exempel:\nICA Kvantum\n2026-07-25\nMjolk 24,90\nBrod 31,50\nTomater 19,95\nTotalt 76,35 SEK',
+    categories: {
+      meat: 'Kott',
+      vegetables: 'Gronsaker',
+      dairy: 'Mejeri',
+      grains: 'Skafferi och spannmal',
+      pantry: 'Basvaror',
+      snacks: 'Snacks',
+      frozen: 'Fryst',
+      beverages: 'Drycker',
+      household: 'Hushall',
+      other: 'Ovrigt'
+    }
+  }
+};
+
+const CATEGORY_PATTERNS = [
+  { key: 'meat', patterns: /beef|chicken|pork|meat|sausage|bacon|lamb|kott|korv|kyckling|flask/i },
+  { key: 'vegetables', patterns: /tomato|potato|onion|salad|carrot|pepper|broccoli|fruit|apple|banana|gronsak|frukt|tomat|potatis|lok/i },
+  { key: 'dairy', patterns: /milk|cheese|yogurt|butter|cream|egg|mejeri|mjolk|ost|smor|yoghurt|agg/i },
+  { key: 'grains', patterns: /bread|rice|pasta|flour|oat|cereal|brod|ris|pasta|havre|mjol/i },
+  { key: 'pantry', patterns: /oil|salt|sugar|spice|sauce|beans|coffee|tea|krydda|salt|socker|kaffe|te/i },
+  { key: 'snacks', patterns: /chips|candy|chocolate|snack|cookies|godis|kex|choklad/i },
+  { key: 'frozen', patterns: /frozen|ice cream|glass|fryst/i },
+  { key: 'beverages', patterns: /juice|soda|cola|water|beer|wine|drink|lask|dryck|vatten/i },
+  { key: 'household', patterns: /soap|detergent|paper|napkin|clean|disk|tvatt|hushall|toalett/i }
+];
+
+const DEFAULT_CATEGORY_KEYS = ['meat', 'vegetables', 'dairy', 'grains', 'pantry', 'snacks'];
+
+const createEmptyItems = () =>
+  DEFAULT_CATEGORY_KEYS.map((key) => ({
+    key,
+    label: key,
+    amount: 0
+  }));
+
+const formatDateForInput = (value = new Date()) => {
+  return new Date(value).toISOString().split('T')[0];
+};
+
+const sanitizeNumber = (rawValue) => {
+  const value = String(rawValue || '')
+    .replace(/\s/g, '')
+    .replace(/,/g, '.')
+    .replace(/[^0-9.-]/g, '');
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const inferCurrency = (text) => {
+  if (/sek|kr\b/i.test(text)) return 'SEK';
+  if (/eur|€/.test(text)) return 'EUR';
+  if (/usd|\$/.test(text)) return 'USD';
+  return 'SEK';
+};
+
+const normalizeToSek = (amount, currency) => {
+  const rate = EXCHANGE_RATES[currency] || 1;
+  return amount * rate;
+};
+
+const convertFromSek = (amountSek, currency) => {
+  const rate = EXCHANGE_RATES[currency] || 1;
+  return amountSek / rate;
+};
+
+const pickCategoryKey = (label) => {
+  const match = CATEGORY_PATTERNS.find(({ patterns }) => patterns.test(label));
+  return match ? match.key : 'other';
+};
+
+const buildTranslator = (language) => {
+  const dict = TRANSLATIONS[language] || TRANSLATIONS.en;
+  return (key) => {
+    const path = key.split('.');
+    let result = dict;
+    for (const part of path) {
+      result = result?.[part];
+    }
+    return result ?? key;
+  };
+};
+
+const formatMoney = (amountSek, currency, locale) => {
+  const converted = convertFromSek(amountSek, currency);
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 2
+  }).format(converted);
+};
+
+const formatReceiptDate = (date, locale) => {
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  }).format(new Date(date));
+};
+
+const parseReceiptText = (text, fallbackDate) => {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const currency = inferCurrency(trimmed);
+  const merchant = lines[0] || 'Unknown Merchant';
+  const dateMatch = trimmed.match(/\b(20\d{2}[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01]))\b|\b(0?[1-9]|[12]\d|3[01])[-/.](0?[1-9]|1[0-2])[-/.](20\d{2})\b/);
+  const parsedDate = dateMatch ? dateMatch[0].replace(/\./g, '-').replace(/\//g, '-') : fallbackDate;
+
+  const itemLines = [];
+  let detectedTotal = 0;
+
+  for (const line of lines) {
+    const amountMatch = line.match(/(-?\d+[.,]\d{2})\s*(sek|kr|eur|usd|€|\$)?$/i);
+    if (!amountMatch) continue;
+
+    const amount = sanitizeNumber(amountMatch[1]);
+    if (/(total|sum|att betala|totalt|subtotal|amount due)/i.test(line)) {
+      detectedTotal = amount;
+      continue;
+    }
+
+    const label = line.replace(amountMatch[0], '').replace(/[xX]\d+/g, '').trim();
+    if (!label || label.length < 2) continue;
+
+    itemLines.push({
+      name: label,
+      amount,
+      categoryKey: pickCategoryKey(label)
+    });
+  }
+
+  if (itemLines.length === 0 && !detectedTotal) return null;
+
+  const grouped = itemLines.reduce((acc, item) => {
+    acc[item.categoryKey] = (acc[item.categoryKey] || 0) + item.amount;
+    return acc;
+  }, {});
+
+  const items = Object.entries(grouped).map(([key, amount]) => ({
+    key,
+    label: key,
+    amount
+  }));
+
+  const total = detectedTotal || itemLines.reduce((sum, item) => sum + item.amount, 0);
+
+  return {
+    merchant,
+    date: parsedDate,
+    currency,
+    items: items.length > 0 ? items : createEmptyItems(),
+    total,
+    source: 'ocr',
+    rawText: text
+  };
+};
 
 const CartFilter = () => {
   const [user, setUser] = useState(null);
   const [receipts, setReceipts] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [language, setLanguage] = useState('en');
+  const [displayCurrency, setDisplayCurrency] = useState('SEK');
+  const [ocrText, setOcrText] = useState('');
+  const [parseMessage, setParseMessage] = useState('');
+  const [parseStatus, setParseStatus] = useState('idle');
 
-  // Sample data for demo
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    items: [
-      { category: 'Meat', amount: 0 },
-      { category: 'Vegetables', amount: 0 },
-      { category: 'Dairy', amount: 0 },
-      { category: 'Grains', amount: 0 },
-      { category: 'Other', amount: 0 }
-    ]
+    merchant: '',
+    date: formatDateForInput(),
+    currency: 'SEK',
+    source: 'manual',
+    items: createEmptyItems()
   });
 
-  // Calculate spending by category
-  const calculateCategorySpending = () => {
-    const spending = {};
-    receipts.forEach(receipt => {
-      receipt.items.forEach(item => {
-        spending[item.category] = (spending[item.category] || 0) + item.amount;
+  useEffect(() => {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (!stored) return;
+
+    try {
+      const parsed = JSON.parse(stored);
+      setReceipts(parsed.receipts || []);
+      setLanguage(parsed.language || 'en');
+      setDisplayCurrency(parsed.displayCurrency || 'SEK');
+    } catch (error) {
+      console.error('Failed to restore CartFilter state', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ receipts, language, displayCurrency })
+    );
+  }, [receipts, language, displayCurrency]);
+
+  const t = useMemo(() => buildTranslator(language), [language]);
+  const locale = language === 'sv' ? 'sv-SE' : 'en-US';
+
+  const translatedCategoryLabel = useCallback((key) => t(`categories.${key}`) || key, [t]);
+
+  const normalizedItems = useMemo(
+    () =>
+      formData.items.map((item) => ({
+        ...item,
+        amount: Number(item.amount) || 0
+      })),
+    [formData.items]
+  );
+
+  const totalSpentSek = normalizedItems.reduce(
+    (sum, item) => sum + normalizeToSek(item.amount, formData.currency),
+    0
+  );
+
+  const receiptsWithDisplay = useMemo(
+    () =>
+      receipts.map((receipt) => ({
+        ...receipt,
+        displayTotal: formatMoney(receipt.totalSek, displayCurrency, locale)
+      })),
+    [displayCurrency, locale, receipts]
+  );
+
+  const categoryData = useMemo(() => {
+    const totals = {};
+
+    receipts.forEach((receipt) => {
+      receipt.items.forEach((item) => {
+        const amountSek = normalizeToSek(item.amount, receipt.currency);
+        totals[item.key] = (totals[item.key] || 0) + amountSek;
       });
     });
-    return Object.entries(spending).map(([category, amount]) => ({
-      name: category,
-      value: parseFloat(amount.toFixed(2))
-    }));
-  };
 
-  // Calculate totals
-  const totalSpent = formData.items.reduce((sum, item) => sum + item.amount, 0);
-  const categoryData = calculateCategorySpending();
-  const colors = ['#D4A574', '#E8C5A0', '#F4E4D0', '#FFF9E6', '#FFE4B5'];
+    return Object.entries(totals)
+      .map(([key, value]) => ({
+        key,
+        name: translatedCategoryLabel(key),
+        value
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [receipts, translatedCategoryLabel]);
 
-  // Handle form input
+  const totalAcrossReceiptsSek = receipts.reduce((sum, receipt) => sum + receipt.totalSek, 0);
+
   const handleItemChange = (index, field, value) => {
-    const newItems = [...formData.items];
-    newItems[index][field] = field === 'amount' ? parseFloat(value) || 0 : value;
-    setFormData({ ...formData, items: newItems });
+    const nextItems = [...formData.items];
+    nextItems[index] = {
+      ...nextItems[index],
+      [field]: field === 'amount' ? sanitizeNumber(value) : value
+    };
+    setFormData((current) => ({ ...current, items: nextItems }));
   };
 
-  // Add receipt
+  const resetForm = () => {
+    setFormData({
+      merchant: '',
+      date: formatDateForInput(),
+      currency: displayCurrency,
+      source: 'manual',
+      items: createEmptyItems()
+    });
+    setOcrText('');
+    setParseMessage('');
+    setParseStatus('idle');
+  };
+
   const handleAddReceipt = () => {
-    if (totalSpent > 0) {
-      setReceipts([...receipts, {
+    if (totalSpentSek <= 0) return;
+
+    const cleanedItems = normalizedItems.filter((item) => item.amount > 0);
+    setReceipts((current) => [
+      ...current,
+      {
         id: Date.now(),
+        merchant: formData.merchant || 'Unknown Merchant',
         date: formData.date,
-        items: formData.items,
-        total: totalSpent
-      }]);
-      // Reset form
-      setFormData({
-        date: new Date().toISOString().split('T')[0],
-        items: [
-          { category: 'Meat', amount: 0 },
-          { category: 'Vegetables', amount: 0 },
-          { category: 'Dairy', amount: 0 },
-          { category: 'Grains', amount: 0 },
-          { category: 'Other', amount: 0 }
-        ]
-      });
-      setShowForm(false);
-    }
+        currency: formData.currency,
+        source: formData.source,
+        items: cleanedItems,
+        totalSek: totalSpentSek
+      }
+    ]);
+
+    resetForm();
+    setShowForm(false);
   };
 
-  // Mock Google Sign-In
+  const handleParseReceipt = () => {
+    setParseStatus('working');
+    const parsed = parseReceiptText(ocrText, formData.date);
+
+    if (!parsed) {
+      setParseStatus('error');
+      setParseMessage(t('parseError'));
+      return;
+    }
+
+    setFormData({
+      merchant: parsed.merchant,
+      date: parsed.date,
+      currency: parsed.currency,
+      source: parsed.source,
+      items: parsed.items
+    });
+    setParseStatus('success');
+    setParseMessage(t('parseSuccess'));
+  };
+
   const handleGoogleSignIn = () => {
     setUser({ name: 'Demo User', email: 'user@example.com' });
   };
 
   const handleSignOut = () => {
     setUser(null);
-    setReceipts([]);
   };
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center p-4">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">Spending Tracker</h1>
-          <p className="text-gray-600 mb-8">Analyze where your money goes</p>
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-100 flex items-center justify-center p-4">
+        <div className="max-w-lg text-center rounded-3xl bg-white/85 shadow-xl border border-amber-100 p-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-700 mb-3">{t('appName')}</p>
+          <h1 className="text-4xl font-bold text-stone-900 mb-3">{t('welcome')}</h1>
+          <p className="text-stone-600 mb-8">{t('tagline')}</p>
           <button
             onClick={handleGoogleSignIn}
-            className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 px-8 rounded-lg transition"
+            className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 px-8 rounded-full transition"
           >
-            Sign in with Google
+            {t('signIn')}
           </button>
         </div>
       </div>
@@ -97,162 +448,286 @@ const CartFilter = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-      {/* Header */}
-      <header className="bg-white border-b border-amber-100 sticky top-0 z-50">
-        <div className="max-w-2xl mx-auto px-4 py-4 flex justify-between items-center">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.16),_transparent_30%),linear-gradient(180deg,_#fffdf8_0%,_#fff7ed_45%,_#fffbeb_100%)]">
+      <header className="bg-white/90 backdrop-blur border-b border-amber-100 sticky top-0 z-50">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">Spending Tracker</h1>
-            <p className="text-sm text-gray-600">{user.email}</p>
+            <h1 className="text-2xl font-bold text-stone-900">{t('appName')}</h1>
+            <p className="text-sm text-stone-600">{user.email}</p>
           </div>
-          <button
-            onClick={handleSignOut}
-            className="text-sm bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg transition"
-          >
-            Sign out
-          </button>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-sm text-stone-700">
+              {t('language')}
+              <select
+                value={language}
+                onChange={(event) => setLanguage(event.target.value)}
+                className="ml-2 rounded-full border border-amber-200 bg-white px-3 py-2"
+              >
+                <option value="en">English</option>
+                <option value="sv">Svenska</option>
+              </select>
+            </label>
+
+            <label className="text-sm text-stone-700">
+              {t('currency')}
+              <select
+                value={displayCurrency}
+                onChange={(event) => setDisplayCurrency(event.target.value)}
+                className="ml-2 rounded-full border border-amber-200 bg-white px-3 py-2"
+              >
+                {SUPPORTED_CURRENCIES.map((currency) => (
+                  <option key={currency} value={currency}>
+                    {currency}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <button
+              onClick={handleSignOut}
+              className="text-sm bg-stone-200 hover:bg-stone-300 text-stone-800 px-4 py-2 rounded-full transition"
+            >
+              {t('signOut')}
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto p-4 pb-20">
-        {/* Add Receipt Button */}
-        {!showForm && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="w-full bg-amber-600 hover:bg-amber-700 text-white font-semibold py-4 rounded-lg mb-6 transition flex items-center justify-center gap-2"
-          >
-            <span>+ Add Receipt</span>
-          </button>
-        )}
+      <main className="max-w-5xl mx-auto p-4 pb-20">
+        <section className="grid gap-4 md:grid-cols-[1.3fr_0.7fr] mb-6">
+          <div className="rounded-3xl bg-stone-900 text-white p-6 shadow-xl">
+            <p className="text-xs uppercase tracking-[0.3em] text-amber-300 mb-3">{t('ocrReady')}</p>
+            <h2 className="text-3xl font-bold mb-3">{t('welcome')}</h2>
+            <p className="text-stone-200 max-w-xl">{t('ocrReadyHint')}</p>
+          </div>
 
-        {/* Receipt Form */}
+          <div className="rounded-3xl bg-white border border-amber-100 p-6 shadow-md">
+            <p className="text-sm text-stone-500 mb-2">{t('exchangeRateNote')}</p>
+            <button
+              onClick={() => setShowForm((current) => !current)}
+              className="w-full mt-4 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 rounded-full transition"
+            >
+              {showForm ? t('hideForm') : t('importReceipt')}
+            </button>
+          </div>
+        </section>
+
         {showForm && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6 border border-amber-100">
-            <h2 className="text-xl font-bold text-gray-800 mb-4">New Receipt</h2>
-            
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
-              <input
-                type="date"
-                value={formData.date}
-                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2"
+          <section className="grid gap-6 lg:grid-cols-2 mb-8">
+            <div className="bg-white rounded-3xl shadow-md p-6 border border-amber-100">
+              <h2 className="text-xl font-bold text-stone-900 mb-2">{t('importTitle')}</h2>
+              <p className="text-stone-600 mb-4">{t('importDescription')}</p>
+              <label className="block text-sm font-medium text-stone-700 mb-2">{t('ocrText')}</label>
+              <textarea
+                value={ocrText}
+                onChange={(event) => setOcrText(event.target.value)}
+                placeholder={t('ocrPlaceholder')}
+                rows={13}
+                className="w-full rounded-2xl border border-stone-300 px-4 py-3 resize-y"
               />
+              <button
+                onClick={handleParseReceipt}
+                className="mt-4 bg-stone-900 hover:bg-stone-800 text-white font-semibold py-3 px-5 rounded-full transition"
+              >
+                {parseStatus === 'working' ? t('parsing') : t('parseReceipt')}
+              </button>
+              {parseMessage && (
+                <p className={`mt-3 text-sm ${parseStatus === 'error' ? 'text-red-600' : 'text-emerald-700'}`}>
+                  {parseMessage}
+                </p>
+              )}
             </div>
 
-            <div className="space-y-3 mb-6">
-              {formData.items.map((item, idx) => (
-                <div key={idx} className="flex gap-2">
+            <div className="bg-white rounded-3xl shadow-md p-6 border border-amber-100">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-stone-900">{t('newReceipt')}</h2>
+                <span className="text-xs uppercase tracking-[0.25em] text-amber-700">
+                  {formData.source === 'ocr' ? t('parsedFromOcr') : t('manualEntry')}
+                </span>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">{t('merchant')}</label>
                   <input
                     type="text"
-                    value={item.category}
-                    onChange={(e) => handleItemChange(idx, 'category', e.target.value)}
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={item.amount || ''}
-                    onChange={(e) => handleItemChange(idx, 'amount', e.target.value)}
-                    placeholder="0.00"
-                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={formData.merchant}
+                    placeholder={t('merchantPlaceholder')}
+                    onChange={(event) => setFormData((current) => ({ ...current, merchant: event.target.value }))}
+                    className="w-full border border-stone-300 rounded-2xl px-3 py-2"
                   />
                 </div>
-              ))}
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">{t('date')}</label>
+                  <input
+                    type="date"
+                    value={formData.date}
+                    onChange={(event) => setFormData((current) => ({ ...current, date: event.target.value }))}
+                    className="w-full border border-stone-300 rounded-2xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">{t('currency')}</label>
+                  <select
+                    value={formData.currency}
+                    onChange={(event) => setFormData((current) => ({ ...current, currency: event.target.value }))}
+                    className="w-full border border-stone-300 rounded-2xl px-3 py-2"
+                  >
+                    {SUPPORTED_CURRENCIES.map((currency) => (
+                      <option key={currency} value={currency}>
+                        {currency}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">{t('source')}</label>
+                  <input
+                    type="text"
+                    value={formData.source === 'ocr' ? t('parsedFromOcr') : t('manualEntry')}
+                    readOnly
+                    className="w-full border border-stone-200 bg-stone-50 rounded-2xl px-3 py-2 text-stone-500"
+                  />
+                </div>
+              </div>
 
-            <div className="bg-amber-50 rounded-lg p-3 mb-4 border border-amber-200">
-              <p className="text-sm text-gray-600">Total: <span className="font-bold text-lg text-amber-700">${totalSpent.toFixed(2)}</span></p>
-            </div>
+              <div className="mt-5">
+                <p className="text-sm font-semibold text-stone-800 mb-3">{t('groceryFocus')}</p>
+                <div className="space-y-3">
+                  {formData.items.map((item, index) => (
+                    <div key={`${item.key}-${index}`} className="grid grid-cols-[1fr_110px] gap-2">
+                      <input
+                        type="text"
+                        value={translatedCategoryLabel(item.key)}
+                        readOnly
+                        className="border border-stone-200 bg-stone-50 rounded-2xl px-3 py-2 text-sm text-stone-600"
+                      />
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={item.amount || ''}
+                        onChange={(event) => handleItemChange(index, 'amount', event.target.value)}
+                        placeholder="0.00"
+                        className="border border-stone-300 rounded-2xl px-3 py-2 text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={handleAddReceipt}
-                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 rounded-lg transition"
-              >
-                Save Receipt
-              </button>
-              <button
-                onClick={() => setShowForm(false)}
-                className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition"
-              >
-                Cancel
-              </button>
+              <div className="mt-5 rounded-2xl bg-amber-50 border border-amber-200 p-4">
+                <p className="text-sm text-stone-600">
+                  {t('total')}: <span className="font-bold text-lg text-amber-700">{formatMoney(totalSpentSek, formData.currency, locale)}</span>
+                </p>
+                <p className="text-xs text-stone-500 mt-1">
+                  {t('currency')}: {displayCurrency} view, {formData.currency} receipt
+                </p>
+              </div>
+
+              <div className="flex gap-2 mt-5">
+                <button
+                  onClick={handleAddReceipt}
+                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 rounded-full transition"
+                >
+                  {t('saveReceipt')}
+                </button>
+                <button
+                  onClick={() => {
+                    resetForm();
+                    setShowForm(false);
+                  }}
+                  className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-800 font-semibold py-3 rounded-full transition"
+                >
+                  {t('cancel')}
+                </button>
+              </div>
             </div>
-          </div>
+          </section>
         )}
 
-        {/* Stats Overview */}
         {receipts.length > 0 && (
           <>
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-white rounded-lg shadow-md p-4 border-l-4 border-amber-600">
-                <p className="text-gray-600 text-sm font-medium">Total Spent</p>
-                <p className="text-2xl font-bold text-amber-700">${receipts.reduce((sum, r) => sum + r.total, 0).toFixed(2)}</p>
+            <section className="grid sm:grid-cols-2 gap-4 mb-6">
+              <div className="bg-white rounded-3xl shadow-md p-5 border-l-4 border-amber-600">
+                <p className="text-stone-500 text-sm font-medium">{t('totalSpent')}</p>
+                <p className="text-3xl font-bold text-amber-700">{formatMoney(totalAcrossReceiptsSek, displayCurrency, locale)}</p>
               </div>
-              <div className="bg-white rounded-lg shadow-md p-4 border-l-4 border-orange-500">
-                <p className="text-gray-600 text-sm font-medium">Receipts</p>
-                <p className="text-2xl font-bold text-orange-600">{receipts.length}</p>
+              <div className="bg-white rounded-3xl shadow-md p-5 border-l-4 border-stone-700">
+                <p className="text-stone-500 text-sm font-medium">{t('receipts')}</p>
+                <p className="text-3xl font-bold text-stone-900">{receipts.length}</p>
               </div>
-            </div>
+            </section>
 
-            {/* Category Breakdown */}
-            <div className="bg-white rounded-lg shadow-md p-6 mb-6 border border-amber-100">
-              <h2 className="text-lg font-bold text-gray-800 mb-4">Spending by Category</h2>
+            <section className="bg-white rounded-3xl shadow-md p-6 mb-6 border border-amber-100">
+              <h2 className="text-lg font-bold text-stone-900 mb-4">{t('spendingByCategory')}</h2>
               <div className="space-y-3">
-                {categoryData.map((cat, idx) => {
-                  const total = categoryData.reduce((sum, c) => sum + c.value, 0);
-                  const percentage = ((cat.value / total) * 100).toFixed(1);
+                {categoryData.map((category) => {
+                  const percentage = totalAcrossReceiptsSek > 0
+                    ? ((category.value / totalAcrossReceiptsSek) * 100).toFixed(1)
+                    : '0.0';
+
                   return (
-                    <div key={idx}>
+                    <div key={category.key}>
                       <div className="flex justify-between mb-1">
-                        <span className="text-sm font-medium text-gray-800">{cat.name}</span>
-                        <span className="text-sm font-bold text-amber-700">${cat.value.toFixed(2)} ({percentage}%)</span>
+                        <span className="text-sm font-medium text-stone-800">{category.name}</span>
+                        <span className="text-sm font-bold text-amber-700">
+                          {formatMoney(category.value, displayCurrency, locale)} ({percentage}%)
+                        </span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div className="w-full bg-stone-200 rounded-full h-2 overflow-hidden">
                         <div
                           className="bg-amber-600 h-2 rounded-full transition-all"
                           style={{ width: `${percentage}%` }}
-                        ></div>
+                        />
                       </div>
                     </div>
                   );
                 })}
               </div>
-            </div>
+            </section>
 
-            {/* Recent Receipts */}
-            <div className="space-y-3">
-              <h2 className="text-lg font-bold text-gray-800">Recent Receipts</h2>
-              {receipts.reverse().map(receipt => (
-                <div key={receipt.id} className="bg-white rounded-lg shadow-md p-4 border border-amber-100">
-                  <div className="flex justify-between items-start mb-3">
+            <section className="space-y-3">
+              <h2 className="text-lg font-bold text-stone-900">{t('recentReceipts')}</h2>
+              {[...receiptsWithDisplay].reverse().map((receipt) => (
+                <div key={receipt.id} className="bg-white rounded-3xl shadow-md p-5 border border-amber-100">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
                     <div>
-                      <p className="font-semibold text-gray-800">{receipt.date}</p>
-                      <p className="text-sm text-gray-600">{receipt.items.filter(i => i.amount > 0).length} items</p>
+                      <p className="font-semibold text-stone-900">{receipt.merchant}</p>
+                      <p className="text-sm text-stone-600">{formatReceiptDate(receipt.date, locale)}</p>
+                      <p className="text-xs uppercase tracking-[0.2em] text-stone-400 mt-1">
+                        {receipt.source === 'ocr' ? t('parsedFromOcr') : t('manualEntry')}
+                      </p>
                     </div>
-                    <p className="font-bold text-amber-700 text-lg">${receipt.total.toFixed(2)}</p>
+                    <div className="text-right">
+                      <p className="font-bold text-amber-700 text-lg">{receipt.displayTotal}</p>
+                      <p className="text-sm text-stone-500">{receipt.items.length} {t('items')}</p>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
-                    {receipt.items.filter(i => i.amount > 0).map((item, idx) => (
-                      <div key={idx} className="flex justify-between">
-                        <span>{item.category}:</span>
-                        <span className="font-semibold">${item.amount.toFixed(2)}</span>
+                  <div className="grid sm:grid-cols-2 gap-2 text-sm text-stone-600">
+                    {receipt.items.map((item, index) => (
+                      <div key={`${receipt.id}-${item.key}-${index}`} className="flex justify-between rounded-2xl bg-stone-50 px-3 py-2">
+                        <span>{translatedCategoryLabel(item.key)}</span>
+                        <span className="font-semibold">
+                          {new Intl.NumberFormat(locale, {
+                            style: 'currency',
+                            currency: receipt.currency
+                          }).format(item.amount)}
+                        </span>
                       </div>
                     ))}
                   </div>
                 </div>
               ))}
-            </div>
+            </section>
           </>
         )}
 
-        {/* Empty State */}
         {receipts.length === 0 && !showForm && (
-          <div className="text-center py-12">
-            <p className="text-gray-600 text-lg mb-4">No receipts yet</p>
-            <p className="text-gray-500 text-sm">Upload your first receipt to get started</p>
-          </div>
+          <section className="text-center py-16">
+            <p className="text-stone-700 text-lg mb-3">{t('noReceipts')}</p>
+            <p className="text-stone-500 max-w-lg mx-auto">{t('noReceiptsHint')}</p>
+          </section>
         )}
       </main>
     </div>
