@@ -5,6 +5,7 @@ const mockSignInWithPopup = jest.fn();
 const mockOnAuthStateChanged = jest.fn();
 const mockOnSnapshot = jest.fn();
 const mockAddDoc = jest.fn();
+const mockSetDoc = jest.fn();
 
 jest.mock('./firebase', () => ({
   auth: { app: 'test-auth' },
@@ -21,14 +22,17 @@ jest.mock('firebase/auth', () => ({
 jest.mock('firebase/firestore', () => ({
   addDoc: (...args) => mockAddDoc(...args),
   collection: (...path) => ({ path }),
+  doc: (...path) => ({ path }),
   onSnapshot: (...args) => mockOnSnapshot(...args),
   orderBy: () => ({ field: 'createdAt' }),
   query: (collectionRef) => collectionRef,
-  serverTimestamp: () => 'server-timestamp'
+  serverTimestamp: () => 'server-timestamp',
+  setDoc: (...args) => mockSetDoc(...args)
 }));
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.localStorage.clear();
 });
 
 test('renders localized receipt import after firebase sign in', async () => {
@@ -129,7 +133,8 @@ Mottaget Kontokort 276,79
     beverages: 20,
     deposit: 6,
     meat: 128.3,
-    vegetables: 105.59,
+    fruits: 39.9,
+    vegetables: 65.69,
     snacks: 16.9
   });
   expect(parsed.lineItems.find((item) => item.name.includes('PANT'))).toEqual(
@@ -180,4 +185,105 @@ Totalt 186,89 SEK
   });
   expect(parsed.lineItems[0].name).toContain('COLA SOCKERFRI 2L');
   expect(parsed.lineItems[0].categoryKey).toBe('beverages');
+});
+
+test('reuses a remembered category and treats price reduction as a discount', () => {
+  const parsed = parseReceiptText(
+    `ICA Nära
+Org. nr: 123456-7890
+ROYAL ROLLS VANILJ 9,36
+Prisnedsättning -2,00
+Totalt 1 varor
+Totalt 7,36 SEK`,
+    '2026-07-30',
+    { 'royal rolls vanilj': 'snacks' }
+  );
+
+  expect(parsed.lineItems[0]).toEqual(expect.objectContaining({
+    name: 'ROYAL ROLLS VANILJ',
+    categoryKey: 'snacks',
+    confidence: 'remembered',
+    type: 'product'
+  }));
+  expect(parsed.lineItems[1]).toEqual(expect.objectContaining({
+    categoryKey: 'snacks',
+    type: 'discount',
+    linkedTo: 'ROYAL ROLLS VANILJ',
+    amount: -2
+  }));
+  expect(parsed.items).toEqual([
+    expect.objectContaining({ key: 'snacks', amount: 7.36 })
+  ]);
+});
+
+test('links a named brioche discount even when another product is between the lines', () => {
+  const parsed = parseReceiptText(
+    `Willys
+Org. nr: 556163-2232
+BROSCHE 24,90
+MJÖLK 18,00
+Willys Plus:BROSCHE -5,00
+Totalt 2 varor
+Totalt 37,90 SEK`,
+    '2026-07-30'
+  );
+
+  expect(parsed.lineItems[0]).toEqual(expect.objectContaining({
+    categoryKey: 'grains',
+    type: 'product'
+  }));
+  expect(parsed.lineItems[2]).toEqual(expect.objectContaining({
+    categoryKey: 'grains',
+    type: 'discount',
+    linkedTo: 'BROSCHE',
+    amount: -5
+  }));
+  expect(parsed.items.find((item) => item.key === 'grains').amount).toBe(19.9);
+});
+
+test('builds a simple shopping list from common-item templates', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((receiptQuery, callback) => {
+    callback({ docs: [] });
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /add weekly basics/i }));
+
+  expect(screen.getByText('Milk')).toBeInTheDocument();
+  expect(screen.getByText('Eggs')).toBeInTheDocument();
+  expect(screen.getByText('Bread')).toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem('cartfilter-shopping-list-user-1'))).toHaveLength(9);
+
+  fireEvent.change(screen.getByPlaceholderText(/milk, tomatoes, rice/i), {
+    target: { value: 'Mjölk' }
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^add item$/i }));
+  expect(screen.queryByText('Mjölk')).not.toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem('cartfilter-shopping-list-user-1'))).toHaveLength(9);
+
+  fireEvent.change(screen.getByPlaceholderText(/milk, tomatoes, rice/i), {
+    target: { value: 'Royal Rolls Vanilj' }
+  });
+  fireEvent.change(screen.getByRole('combobox', { name: /item category/i }), {
+    target: { value: 'snacks' }
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^add item$/i }));
+
+  await waitFor(() => {
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.arrayContaining(['categoryMappings', 'royal%20rolls%20vanilj'])
+      }),
+      expect.objectContaining({
+        normalizedName: 'royal rolls vanilj',
+        categoryKey: 'snacks'
+      }),
+      { merge: true }
+    );
+  });
 });

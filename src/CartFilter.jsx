@@ -8,10 +8,12 @@ import {
 import {
   addDoc,
   collection,
+  doc,
   onSnapshot,
   orderBy,
   query,
-  serverTimestamp
+  serverTimestamp,
+  setDoc
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { createWorker } from 'tesseract.js';
@@ -88,10 +90,23 @@ const TRANSLATIONS = {
     discount: 'Discount',
     deposit: 'Deposit',
     needsReview: 'Needs review',
+    shoppingList: 'Shopping list',
+    shoppingListHint: 'Start with common groceries or reuse products found in your receipts.',
+    weeklyBasics: 'Add weekly basics',
+    proteinAndProduce: 'Add protein and vegetables',
+    learnedSuggestions: 'From your receipts',
+    learnedSuggestionsHint: 'Suggestions appear after you save receipts with detected product lines.',
+    addItem: 'Add item',
+    itemCategory: 'Item category',
+    itemPlaceholder: 'Milk, tomatoes, rice...',
+    removeItem: 'Remove',
+    clearCompleted: 'Clear completed',
+    emptyShoppingList: 'Your shopping list is empty.',
     merchantPlaceholder: 'Store or merchant name',
     ocrPlaceholder: 'Paste OCR text here. Example:\nICA Kvantum\n2026-07-25\nMilk 24.90\nBread 31.50\nTomatoes 19.95\nTotal 76.35 SEK',
     categories: {
       meat: 'Protein',
+      fruits: 'Fruit',
       vegetables: 'Vegetables',
       dairy: 'Dairy',
       grains: 'Grains',
@@ -102,6 +117,23 @@ const TRANSLATIONS = {
       household: 'Household',
       deposit: 'Refundable deposit',
       other: 'Other'
+    },
+    commonItems: {
+      milk: 'Milk',
+      eggs: 'Eggs',
+      bread: 'Bread',
+      rice: 'Rice',
+      pasta: 'Pasta',
+      potatoes: 'Potatoes',
+      onions: 'Onions',
+      carrots: 'Carrots',
+      fruit: 'Fruit',
+      chicken: 'Chicken',
+      tofu: 'Tofu',
+      mincedMeat: 'Minced meat',
+      cucumber: 'Cucumber',
+      tomatoes: 'Tomatoes',
+      spinach: 'Spinach'
     }
   },
   sv: {
@@ -163,10 +195,23 @@ const TRANSLATIONS = {
     discount: 'Rabatt',
     deposit: 'Pant',
     needsReview: 'Behover granskas',
+    shoppingList: 'Inkopslista',
+    shoppingListHint: 'Borja med vanliga matvaror eller ateranvand varor fran dina kvitton.',
+    weeklyBasics: 'Lagg till veckans basvaror',
+    proteinAndProduce: 'Lagg till protein och gronsaker',
+    learnedSuggestions: 'Fran dina kvitton',
+    learnedSuggestionsHint: 'Forslag visas nar du har sparat kvitton med identifierade varurader.',
+    addItem: 'Lagg till vara',
+    itemCategory: 'Varukategori',
+    itemPlaceholder: 'Mjolk, tomater, ris...',
+    removeItem: 'Ta bort',
+    clearCompleted: 'Ta bort avklarade',
+    emptyShoppingList: 'Din inkopslista ar tom.',
     merchantPlaceholder: 'Butik eller handlare',
     ocrPlaceholder: 'Klistra in OCR-text har. Exempel:\nICA Kvantum\n2026-07-25\nMjolk 24,90\nBrod 31,50\nTomater 19,95\nTotalt 76,35 SEK',
     categories: {
       meat: 'Protein',
+      fruits: 'Frukt',
       vegetables: 'Gronsaker',
       dairy: 'Mejeri',
       grains: 'Skafferi och spannmal',
@@ -177,6 +222,23 @@ const TRANSLATIONS = {
       household: 'Hushall',
       deposit: 'Pant',
       other: 'Ovrigt'
+    },
+    commonItems: {
+      milk: 'Mjolk',
+      eggs: 'Agg',
+      bread: 'Brod',
+      rice: 'Ris',
+      pasta: 'Pasta',
+      potatoes: 'Potatis',
+      onions: 'Lok',
+      carrots: 'Morotter',
+      fruit: 'Frukt',
+      chicken: 'Kyckling',
+      tofu: 'Tofu',
+      mincedMeat: 'Kottfars',
+      cucumber: 'Gurka',
+      tomatoes: 'Tomater',
+      spinach: 'Spenat'
     }
   }
 };
@@ -184,9 +246,10 @@ const TRANSLATIONS = {
 const CATEGORY_RULES = [
   { key: 'beverages', score: 10, pattern: /\b(cola|pepsi|fanta|sprite|juice|soda|lask|dryck|vatten|water|beer|wine)\b/i },
   { key: 'meat', score: 9, pattern: /\b(beef|chicken|pork|meat|sausage|bacon|lamb|tofu|egg|kott|korv|kyckling|flask|agg|notfars)\b/i },
-  { key: 'vegetables', score: 9, pattern: /\b(tomato|potato|onion|salad|carrot|pepper|broccoli|spinach|grape|parsley|cucumber|fruit|apple|banana|gronsak|frukt|tomat|potatis|lok|gurka|morot|druvor|paprika|spenat|bladpersilja|persilja|sallad)\b/i },
+  { key: 'fruits', score: 9, pattern: /\b(fruit|apple|banana|orange|pear|grape|berries|frukt|apple|banan|apelsin|paron|druvor|bar)\b/i },
+  { key: 'vegetables', score: 9, pattern: /\b(tomato|potato|onion|salad|carrot|pepper|broccoli|spinach|parsley|cucumber|gronsak|tomat|potatis|lok|gurka|morot|paprika|spenat|bladpersilja|persilja|sallad)\b/i },
   { key: 'dairy', score: 8, pattern: /\b(milk|cheese|yogurt|butter|cream|mejeri|mjolk|ost|smor|yoghurt)\b/i },
-  { key: 'grains', score: 8, pattern: /\b(bread|rice|pasta|flour|oat|cereal|brod|ris|havre|mjol)\b/i },
+  { key: 'grains', score: 8, pattern: /\b(bread|brioche|brosche|broiche|rice|pasta|flour|oat|cereal|brod|ris|havre|mjol)\b/i },
   { key: 'snacks', score: 8, pattern: /\b(chips|candy|chocolate|snack|cookie|biscuit|biscoff|godis|kex|choklad|muslibar|popcorn)\b/i },
   { key: 'frozen', score: 7, pattern: /\b(frozen|ice cream|glass|fryst)\b/i },
   { key: 'pantry', score: 5, pattern: /\b(oil|salt|sugar|spice|sauce|beans|coffee|tea|krydda|socker|kaffe)\b/i },
@@ -194,9 +257,10 @@ const CATEGORY_RULES = [
   { key: 'beverages', score: 3, pattern: /\bzero\b/i }
 ];
 
-const DEFAULT_CATEGORY_KEYS = ['meat', 'vegetables', 'dairy', 'grains', 'pantry', 'snacks'];
+const DEFAULT_CATEGORY_KEYS = ['meat', 'fruits', 'vegetables', 'dairy', 'grains', 'pantry', 'snacks'];
 const REVIEW_CATEGORY_KEYS = [
   'meat',
+  'fruits',
   'vegetables',
   'dairy',
   'grains',
@@ -208,6 +272,45 @@ const REVIEW_CATEGORY_KEYS = [
   'deposit',
   'other'
 ];
+const COMMON_LIST_TEMPLATES = {
+  weeklyBasics: ['milk', 'eggs', 'bread', 'rice', 'pasta', 'potatoes', 'onions', 'carrots', 'fruit'],
+  proteinAndProduce: ['chicken', 'tofu', 'mincedMeat', 'cucumber', 'tomatoes', 'spinach']
+};
+const SHOPPING_ITEM_ALIASES = {
+  milk: 'milk',
+  mjolk: 'milk',
+  egg: 'eggs',
+  eggs: 'eggs',
+  agg: 'eggs',
+  bread: 'bread',
+  brod: 'bread',
+  rice: 'rice',
+  ris: 'rice',
+  potatoes: 'potatoes',
+  potato: 'potatoes',
+  potatis: 'potatoes',
+  onion: 'onions',
+  onions: 'onions',
+  lok: 'onions',
+  carrot: 'carrots',
+  carrots: 'carrots',
+  morot: 'carrots',
+  morotter: 'carrots',
+  fruit: 'fruit',
+  frukt: 'fruit',
+  chicken: 'chicken',
+  kyckling: 'chicken',
+  'minced meat': 'minced-meat',
+  kottfars: 'minced-meat',
+  cucumber: 'cucumber',
+  gurka: 'cucumber',
+  tomato: 'tomatoes',
+  tomatoes: 'tomatoes',
+  tomat: 'tomatoes',
+  tomater: 'tomatoes',
+  spinach: 'spinach',
+  spenat: 'spinach'
+};
 
 const createEmptyItems = () =>
   DEFAULT_CATEGORY_KEYS.map((key) => ({
@@ -250,6 +353,19 @@ const normalizeForMatching = (value) => String(value || '')
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '')
   .toLowerCase();
+
+const normalizeProductKey = (value) => normalizeForMatching(value)
+  .replace(/\b\d+(?:[.,]\d+)?\s*(kg|g|ml|cl|l|st|p)\b/g, ' ')
+  .replace(/\b\d+\s*st\b/g, ' ')
+  .replace(/\d+[.,]\d{2}/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const normalizeShoppingIdentity = (value) => {
+  const normalized = normalizeProductKey(value);
+  return SHOPPING_ITEM_ALIASES[normalized] || normalized;
+};
 
 const pickCategoryKey = (label) => {
   const normalizedLabel = normalizeForMatching(label);
@@ -378,7 +494,7 @@ const isReceiptMetadata = (line) => {
     || /^\d{1,2}:\d{2}/.test(line);
 };
 
-const parseReceiptText = (text, fallbackDate) => {
+const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
@@ -432,22 +548,43 @@ const parseReceiptText = (text, fallbackDate) => {
     if (!label || label.length < 2) continue;
 
     const normalizedLabel = normalizeForMatching(label);
-    const isDiscount = /\b(rabatt|discount)\b|willys\s*plus\s*:/i.test(normalizedLabel);
+    const isDiscount = /\b(rabatt|discount|prisnedsattning|prisnedsatt|nedsattning|prisavdrag)\b|willys\s*plus\s*:/i.test(normalizedLabel);
     const isDeposit = /(?:^|\s|\+)pant(?:\s|$)/i.test(normalizedLabel);
     const directCategory = pickCategoryKey(label);
+    const productKey = normalizeProductKey(label);
+    const rememberedCategory = categoryMappings[productKey];
+    const discountSubject = isDiscount
+      ? normalizeProductKey(
+        label.replace(/^.*?(rabatt|discount|prisnedsättning|prisnedsatt|nedsättning|prisavdrag|willys\s*plus)\s*:?\s*/i, '')
+      )
+      : '';
+    const namedDiscountProduct = discountSubject
+      ? [...itemLines].reverse().find((item) => (
+        item.type === 'product'
+          && (
+            item.productKey === discountSubject
+            || item.productKey.includes(discountSubject)
+            || discountSubject.includes(item.productKey)
+          )
+      ))
+      : null;
+    const linkedProduct = namedDiscountProduct || lastProduct;
     const categoryKey = isDeposit
       ? 'deposit'
-      : (isDiscount && directCategory === 'other'
-        ? lastProduct?.categoryKey || 'other'
-        : directCategory);
+      : (isDiscount
+        ? linkedProduct?.categoryKey || directCategory
+        : (rememberedCategory || directCategory));
 
     const parsedLine = {
       name: label,
       amount,
       categoryKey,
       type: isDeposit ? 'deposit' : (isDiscount ? 'discount' : 'product'),
-      linkedTo: (isDiscount || isDeposit) ? lastProduct?.name || null : null,
-      confidence: categoryKey === 'other' ? 'needs-review' : 'rule'
+      linkedTo: (isDiscount || isDeposit) ? linkedProduct?.name || null : null,
+      productKey,
+      confidence: rememberedCategory
+        ? 'remembered'
+        : (categoryKey === 'other' ? 'needs-review' : 'rule')
     };
     itemLines.push(parsedLine);
     if (parsedLine.type === 'product') lastProduct = parsedLine;
@@ -489,6 +626,11 @@ const CartFilter = () => {
   const [receiptError, setReceiptError] = useState('');
   const [receiptsLoading, setReceiptsLoading] = useState(false);
   const [receiptSaving, setReceiptSaving] = useState(false);
+  const [shoppingList, setShoppingList] = useState([]);
+  const [shoppingInput, setShoppingInput] = useState('');
+  const [shoppingCategory, setShoppingCategory] = useState('other');
+  const [shoppingListOwner, setShoppingListOwner] = useState('');
+  const [categoryMappings, setCategoryMappings] = useState({});
 
   const [formData, setFormData] = useState({
     merchant: '',
@@ -533,12 +675,39 @@ const CartFilter = () => {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    if (!user) {
+      setShoppingList([]);
+      setShoppingListOwner('');
+      return;
+    }
+
+    const key = `cartfilter-shopping-list-${user.uid}`;
+    try {
+      const storedList = JSON.parse(window.localStorage.getItem(key) || '[]');
+      setShoppingList(Array.isArray(storedList) ? storedList : []);
+    } catch (error) {
+      console.error('Failed to restore shopping list', error);
+      setShoppingList([]);
+    }
+    setShoppingListOwner(user.uid);
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || shoppingListOwner !== user.uid) return;
+    window.localStorage.setItem(
+      `cartfilter-shopping-list-${user.uid}`,
+      JSON.stringify(shoppingList)
+    );
+  }, [shoppingList, shoppingListOwner, user]);
+
   const t = useMemo(() => buildTranslator(language), [language]);
   const locale = language === 'sv' ? 'sv-SE' : 'en-US';
 
   useEffect(() => {
     if (!user) {
       setReceipts([]);
+      setCategoryMappings({});
       setReceiptsLoading(false);
       setReceiptError('');
       return undefined;
@@ -568,6 +737,25 @@ const CartFilter = () => {
       }
     );
   }, [t, user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    return onSnapshot(
+      collection(db, 'users', user.uid, 'categoryMappings'),
+      (snapshot) => {
+        setCategoryMappings(Object.fromEntries(
+          snapshot.docs.map((mappingDoc) => {
+            const mapping = mappingDoc.data();
+            return [mapping.normalizedName, mapping.categoryKey];
+          })
+        ));
+      },
+      (error) => {
+        console.error('Failed to load learned category mappings', error);
+      }
+    );
+  }, [user]);
 
   const translatedCategoryLabel = useCallback((key) => t(`categories.${key}`) || key, [t]);
 
@@ -613,6 +801,37 @@ const CartFilter = () => {
       .sort((a, b) => b.value - a.value);
   }, [receipts, translatedCategoryLabel]);
 
+  const learnedShoppingSuggestions = useMemo(() => {
+    const learnedProducts = new Map();
+
+    receipts.forEach((receipt) => {
+      (receipt.lineItems || [])
+        .filter((item) => item.type === 'product' && item.amount > 0)
+        .forEach((item) => {
+          const normalizedName = normalizeForMatching(item.name)
+            .replace(/\b\d+\s*(g|kg|ml|l|st|p)\b/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (!normalizedName) return;
+
+          const current = learnedProducts.get(normalizedName);
+          learnedProducts.set(normalizedName, {
+            name: current?.name || item.name,
+            count: (current?.count || 0) + 1,
+            categoryKey: current?.categoryKey || item.categoryKey
+          });
+        });
+    });
+
+    const namesAlreadyAdded = new Set(
+      shoppingList.map((item) => normalizeShoppingIdentity(item.name))
+    );
+    return [...learnedProducts.values()]
+      .filter((item) => !namesAlreadyAdded.has(normalizeShoppingIdentity(item.name)))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 8);
+  }, [receipts, shoppingList]);
+
   const totalAcrossReceiptsSek = receipts.reduce((sum, receipt) => sum + receipt.totalSek, 0);
 
   const handleItemChange = (index, field, value) => {
@@ -624,7 +843,30 @@ const CartFilter = () => {
     setFormData((current) => ({ ...current, items: nextItems }));
   };
 
-  const handleLineItemCategoryChange = (index, categoryKey) => {
+  const rememberCategory = async (name, categoryKey) => {
+    if (!user || categoryKey === 'other') return;
+    const normalizedName = normalizeProductKey(name);
+    if (!normalizedName) return;
+
+    setCategoryMappings((current) => ({ ...current, [normalizedName]: categoryKey }));
+    try {
+      await setDoc(
+        doc(db, 'users', user.uid, 'categoryMappings', encodeURIComponent(normalizedName)),
+        {
+          normalizedName,
+          originalName: name,
+          categoryKey,
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      console.error('Failed to remember category correction', error);
+    }
+  };
+
+  const handleLineItemCategoryChange = async (index, categoryKey) => {
+    const correctedItem = formData.lineItems[index];
     setFormData((current) => {
       const lineItems = current.lineItems.map((item, itemIndex) => (
         itemIndex === index
@@ -637,6 +879,49 @@ const CartFilter = () => {
         items: groupLineItems(lineItems)
       };
     });
+
+    if (!user || correctedItem?.type !== 'product') return;
+    await rememberCategory(correctedItem.name, categoryKey);
+  };
+
+  const addShoppingItems = (names, categoryKey = null) => {
+    setShoppingList((current) => {
+      const existingNames = new Set(current.map((item) => normalizeShoppingIdentity(item.name)));
+      const additions = names
+        .filter((name) => name.trim() && !existingNames.has(normalizeShoppingIdentity(name)))
+        .map((name, index) => ({
+          id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+          name: name.trim(),
+          categoryKey,
+          completed: false
+        }));
+      return [...current, ...additions];
+    });
+  };
+
+  const addCommonTemplate = (templateKey) => {
+    addShoppingItems(
+      COMMON_LIST_TEMPLATES[templateKey].map((itemKey) => t(`commonItems.${itemKey}`))
+    );
+  };
+
+  const handleAddShoppingItem = (event) => {
+    event.preventDefault();
+    if (!shoppingInput.trim()) return;
+    addShoppingItems([shoppingInput], shoppingCategory);
+    rememberCategory(shoppingInput, shoppingCategory);
+    setShoppingInput('');
+    setShoppingCategory('other');
+  };
+
+  const toggleShoppingItem = (itemId) => {
+    setShoppingList((current) => current.map((item) => (
+      item.id === itemId ? { ...item, completed: !item.completed } : item
+    )));
+  };
+
+  const removeShoppingItem = (itemId) => {
+    setShoppingList((current) => current.filter((item) => item.id !== itemId));
   };
 
   const resetForm = () => {
@@ -692,7 +977,7 @@ const CartFilter = () => {
 
   const applyOcrText = (text) => {
     setParseStatus('working');
-    const parsed = parseReceiptText(text, formData.date);
+    const parsed = parseReceiptText(text, formData.date, categoryMappings);
 
     if (!parsed) {
       setParseStatus('error');
@@ -787,7 +1072,7 @@ const CartFilter = () => {
         storagePath
       }));
 
-      const parsed = parseReceiptText(extractedText, formData.date);
+      const parsed = parseReceiptText(extractedText, formData.date, categoryMappings);
       if (!parsed) {
         setParseStatus('error');
         setParseMessage(t('parseError'));
@@ -941,6 +1226,129 @@ const CartFilter = () => {
               {showForm ? t('hideForm') : t('importReceipt')}
             </button>
           </div>
+        </section>
+
+        <section className="mb-6 rounded-3xl border border-amber-100 bg-white p-6 shadow-md">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-stone-900">{t('shoppingList')}</h2>
+              <p className="text-sm text-stone-600">{t('shoppingListHint')}</p>
+            </div>
+            {shoppingList.some((item) => item.completed) && (
+              <button
+                type="button"
+                onClick={() => setShoppingList((current) => current.filter((item) => !item.completed))}
+                className="text-sm font-semibold text-amber-700"
+              >
+                {t('clearCompleted')}
+              </button>
+            )}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => addCommonTemplate('weeklyBasics')}
+              className="rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-900"
+            >
+              + {t('weeklyBasics')}
+            </button>
+            <button
+              type="button"
+              onClick={() => addCommonTemplate('proteinAndProduce')}
+              className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-900"
+            >
+              + {t('proteinAndProduce')}
+            </button>
+          </div>
+
+          <form onSubmit={handleAddShoppingItem} className="mt-4 grid gap-2 sm:grid-cols-[1fr_170px_auto]">
+            <input
+              type="text"
+              value={shoppingInput}
+              onChange={(event) => setShoppingInput(event.target.value)}
+              placeholder={t('itemPlaceholder')}
+              className="min-w-0 flex-1 rounded-full border border-stone-300 px-4 py-2"
+            />
+            <select
+              value={shoppingCategory}
+              onChange={(event) => setShoppingCategory(event.target.value)}
+              aria-label={t('itemCategory')}
+              className="rounded-full border border-stone-300 bg-white px-3 py-2"
+            >
+              {REVIEW_CATEGORY_KEYS
+                .filter((categoryKey) => categoryKey !== 'deposit')
+                .map((categoryKey) => (
+                  <option key={categoryKey} value={categoryKey}>
+                    {translatedCategoryLabel(categoryKey)}
+                  </option>
+                ))}
+            </select>
+            <button
+              type="submit"
+              className="rounded-full bg-stone-900 px-5 py-2 font-semibold text-white"
+            >
+              {t('addItem')}
+            </button>
+          </form>
+
+          {learnedShoppingSuggestions.length > 0 ? (
+            <div className="mt-5">
+              <p className="text-sm font-semibold text-stone-800">{t('learnedSuggestions')}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {learnedShoppingSuggestions.map((item) => (
+                  <button
+                    key={item.name}
+                    type="button"
+                    onClick={() => addShoppingItems([item.name], item.categoryKey)}
+                    className="rounded-full border border-stone-300 bg-stone-50 px-3 py-2 text-sm text-stone-700"
+                  >
+                    + {item.name} {item.count > 1 ? `×${item.count}` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 text-xs text-stone-500">{t('learnedSuggestionsHint')}</p>
+          )}
+
+          {shoppingList.length > 0 ? (
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              {shoppingList.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-3 rounded-2xl border border-stone-200 bg-stone-50 px-3 py-2"
+                >
+                  <input
+                    type="checkbox"
+                    checked={item.completed}
+                    onChange={() => toggleShoppingItem(item.id)}
+                    aria-label={item.name}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <span className={`block text-sm ${item.completed ? 'text-stone-400 line-through' : 'text-stone-800'}`}>
+                      {item.name}
+                    </span>
+                    {item.categoryKey && item.categoryKey !== 'other' && (
+                      <span className="block text-xs text-stone-500">
+                        {translatedCategoryLabel(item.categoryKey)}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeShoppingItem(item.id)}
+                    aria-label={`${t('removeItem')}: ${item.name}`}
+                    className="text-xs font-semibold text-red-600"
+                  >
+                    {t('removeItem')}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-5 text-sm text-stone-500">{t('emptyShoppingList')}</p>
+          )}
         </section>
 
         {showForm && (
