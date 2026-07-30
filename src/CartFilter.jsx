@@ -6,7 +6,6 @@ import {
   signOut as firebaseSignOut
 } from 'firebase/auth';
 import {
-  addDoc,
   collection,
   doc,
   onSnapshot,
@@ -39,6 +38,7 @@ const TRANSLATIONS = {
     signInError: 'Google sign-in did not complete. Please try again.',
     receiptLoadError: 'Your saved receipts could not be loaded. Check the Firestore rules and try again.',
     receiptSaveError: 'The receipt could not be saved. Please try again.',
+    duplicateReceipt: 'Already saved in history.',
     loadingReceipts: 'Loading your receipts...',
     savingReceipt: 'Saving...',
     welcome: 'Smart grocery receipt tracking',
@@ -73,6 +73,11 @@ const TRANSLATIONS = {
     parsedFromOcr: 'Parsed from OCR text',
     manualEntry: 'Manual entry',
     totalSpent: 'Total spent',
+    weeklyBudget: 'Weekly budget',
+    budgetInSek: 'Budget in SEK',
+    spentThisWeek: 'Spent this week',
+    remainingThisWeek: 'Remaining',
+    overBudget: 'You are over your weekly budget.',
     receipts: 'Receipts',
     items: 'items',
     spendingByCategory: 'Spending by category',
@@ -144,6 +149,7 @@ const TRANSLATIONS = {
     signInError: 'Google-inloggningen slutfordes inte. Forsok igen igen.',
     receiptLoadError: 'Dina sparade kvitton kunde inte laddas. Kontrollera Firestore-reglerna och forsok igen.',
     receiptSaveError: 'Kvittot kunde inte sparas. Forsok igen.',
+    duplicateReceipt: 'Redan sparat i historiken.',
     loadingReceipts: 'Laddar dina kvitton...',
     savingReceipt: 'Sparar...',
     welcome: 'Smart kvittosparning for matinkop',
@@ -178,6 +184,11 @@ const TRANSLATIONS = {
     parsedFromOcr: 'Tolkat fran OCR-text',
     manualEntry: 'Manuell inmatning',
     totalSpent: 'Totalt spenderat',
+    weeklyBudget: 'Veckobudget',
+    budgetInSek: 'Budget i SEK',
+    spentThisWeek: 'Spenderat denna vecka',
+    remainingThisWeek: 'Kvar',
+    overBudget: 'Du har overskridit din veckobudget.',
     receipts: 'Kvitton',
     items: 'varor',
     spendingByCategory: 'Utgifter per kategori',
@@ -312,6 +323,7 @@ const SHOPPING_ITEM_ALIASES = {
   spenat: 'spinach'
 };
 
+// Creates the default empty category rows for a new receipt.
 const createEmptyItems = () =>
   DEFAULT_CATEGORY_KEYS.map((key) => ({
     key,
@@ -319,10 +331,21 @@ const createEmptyItems = () =>
     amount: 0
   }));
 
+// Converts a date into the YYYY-MM-DD format required by date inputs.
 const formatDateForInput = (value = new Date()) => {
   return new Date(value).toISOString().split('T')[0];
 };
 
+// Returns the local start of the week, using Monday as the first day.
+const getStartOfWeek = (value = new Date()) => {
+  const date = new Date(value);
+  const daysSinceMonday = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - daysSinceMonday);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+// Converts user or OCR input into a safe decimal number.
 const sanitizeNumber = (rawValue) => {
   const value = String(rawValue || '')
     .replace(/\s/g, '')
@@ -332,6 +355,7 @@ const sanitizeNumber = (rawValue) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+// Detects the receipt currency from common currency symbols and labels.
 const inferCurrency = (text) => {
   if (/sek|kr\b/i.test(text)) return 'SEK';
   if (/eur|€/.test(text)) return 'EUR';
@@ -339,21 +363,25 @@ const inferCurrency = (text) => {
   return 'SEK';
 };
 
+// Converts a receipt amount into the app's base SEK currency.
 const normalizeToSek = (amount, currency) => {
   const rate = EXCHANGE_RATES[currency] || 1;
   return amount * rate;
 };
 
+// Converts a SEK amount into the selected display currency.
 const convertFromSek = (amountSek, currency) => {
   const rate = EXCHANGE_RATES[currency] || 1;
   return amountSek / rate;
 };
 
+// Normalizes text so OCR labels can be compared consistently.
 const normalizeForMatching = (value) => String(value || '')
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '')
   .toLowerCase();
 
+// Builds a reusable lookup key from a product name.
 const normalizeProductKey = (value) => normalizeForMatching(value)
   .replace(/\b\d+(?:[.,]\d+)?\s*(kg|g|ml|cl|l|st|p)\b/g, ' ')
   .replace(/\b\d+\s*st\b/g, ' ')
@@ -362,11 +390,13 @@ const normalizeProductKey = (value) => normalizeForMatching(value)
   .replace(/\s+/g, ' ')
   .trim();
 
+// Maps translated shopping-list names to one shared item identity.
 const normalizeShoppingIdentity = (value) => {
   const normalized = normalizeProductKey(value);
   return SHOPPING_ITEM_ALIASES[normalized] || normalized;
 };
 
+// Chooses the best grocery category using keyword scores.
 const pickCategoryKey = (label) => {
   const normalizedLabel = normalizeForMatching(label);
   const scores = CATEGORY_RULES.reduce((result, rule) => {
@@ -379,6 +409,7 @@ const pickCategoryKey = (label) => {
   return bestMatch?.[0] || 'other';
 };
 
+// Creates a translation lookup function for the selected language.
 const buildTranslator = (language) => {
   const dict = TRANSLATIONS[language] || TRANSLATIONS.en;
   return (key) => {
@@ -391,6 +422,7 @@ const buildTranslator = (language) => {
   };
 };
 
+// Formats a SEK amount in the selected currency and locale.
 const formatMoney = (amountSek, currency, locale) => {
   const converted = convertFromSek(amountSek, currency);
   return new Intl.NumberFormat(locale, {
@@ -400,6 +432,7 @@ const formatMoney = (amountSek, currency, locale) => {
   }).format(converted);
 };
 
+// Formats a stored receipt date for display.
 const formatReceiptDate = (date, locale) => {
   return new Intl.DateTimeFormat(locale, {
     year: 'numeric',
@@ -408,6 +441,7 @@ const formatReceiptDate = (date, locale) => {
   }).format(new Date(date));
 };
 
+// Resizes and compresses a receipt image before upload and OCR.
 const compressReceiptImage = (file) => new Promise((resolve, reject) => {
   const objectUrl = URL.createObjectURL(file);
   const image = new Image();
@@ -449,8 +483,35 @@ const compressReceiptImage = (file) => new Promise((resolve, reject) => {
   image.src = objectUrl;
 });
 
+// Rounds monetary values to two decimal places.
 const roundMoney = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
+// Creates a stable receipt ID used to prevent duplicate saves.
+const createReceiptFingerprint = (receipt) => {
+  const itemIdentity = (receipt.lineItems?.length ? receipt.lineItems : receipt.items || [])
+    .map((item) => [
+      normalizeProductKey(item.name || item.key || item.label),
+      roundMoney(item.amount),
+      item.type || item.categoryKey || item.key
+    ].join(':'))
+    .join('|');
+  const identity = [
+    normalizeProductKey(receipt.merchant || 'Unknown Merchant'),
+    receipt.date,
+    receipt.currency,
+    roundMoney(receipt.totalSek),
+    itemIdentity
+  ].join('::');
+
+  let hash = 2166136261;
+  for (let index = 0; index < identity.length; index += 1) {
+    hash ^= identity.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `receipt-${(hash >>> 0).toString(36)}`;
+};
+
+// Totals individual receipt lines by grocery category.
 const groupLineItems = (lineItems) => Object.entries(
   lineItems.reduce((totals, item) => {
     totals[item.categoryKey] = (totals[item.categoryKey] || 0) + item.amount;
@@ -462,6 +523,13 @@ const groupLineItems = (lineItems) => Object.entries(
   amount: roundMoney(amount)
 }));
 
+// Removes obvious repeated-character OCR noise from merchant names.
+const cleanMerchantName = (name) => name
+  .replace(/\b([a-zåäö])\1{2,}\b/gi, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+// Finds and cleans the most likely merchant line in OCR text.
 const findMerchant = (lines) => {
   const knownMerchant = lines.find((line) => (
     /willys|ica|coop|lidl|hemkop|city\s*gross|tempo|mathem/i.test(normalizeForMatching(line))
@@ -469,7 +537,7 @@ const findMerchant = (lines) => {
   if (knownMerchant) {
     const normalized = normalizeForMatching(knownMerchant);
     if (normalized.includes('lidl')) return 'Lidl';
-    return knownMerchant;
+    return cleanMerchantName(knownMerchant);
   }
 
   if (lines.some((line) => /969667[-\s]?6312/.test(line))) return 'Lidl';
@@ -483,6 +551,7 @@ const findMerchant = (lines) => {
   }) || 'Unknown Merchant';
 };
 
+// Converts detected date formats into a consistent YYYY-MM-DD value.
 const normalizeReceiptDate = (dateText, fallbackDate) => {
   if (!dateText) return fallbackDate;
   const parts = dateText.split(/[-/.]/).map((part) => Number(part));
@@ -492,6 +561,7 @@ const normalizeReceiptDate = (dateText, fallbackDate) => {
   return `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
 };
 
+// Identifies receipt headers and separators that are not products.
 const isReceiptMetadata = (line) => {
   const normalized = normalizeForMatching(line);
   return !line
@@ -500,6 +570,7 @@ const isReceiptMetadata = (line) => {
     || /^\d{1,2}:\d{2}/.test(line);
 };
 
+// Parses OCR text into merchant, products, categories, discounts, and totals.
 const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
   const trimmed = text.trim();
   if (!trimmed) return null;
@@ -623,6 +694,7 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
   };
 };
 
+// Renders the CartFilter application and coordinates its data and actions.
 const CartFilter = () => {
   const [user, setUser] = useState(null);
   const [receipts, setReceipts] = useState([]);
@@ -639,6 +711,7 @@ const CartFilter = () => {
   const [parseStatus, setParseStatus] = useState('idle');
   const [authError, setAuthError] = useState('');
   const [receiptError, setReceiptError] = useState('');
+  const [receiptNotice, setReceiptNotice] = useState('');
   const [receiptsLoading, setReceiptsLoading] = useState(false);
   const [receiptSaving, setReceiptSaving] = useState(false);
   const [shoppingList, setShoppingList] = useState([]);
@@ -646,6 +719,8 @@ const CartFilter = () => {
   const [shoppingCategory, setShoppingCategory] = useState('other');
   const [shoppingListOwner, setShoppingListOwner] = useState('');
   const [categoryMappings, setCategoryMappings] = useState({});
+  const [weeklyBudgetSek, setWeeklyBudgetSek] = useState(800);
+  const [weeklyBudgetOwner, setWeeklyBudgetOwner] = useState('');
 
   const [formData, setFormData] = useState({
     merchant: '',
@@ -715,6 +790,27 @@ const CartFilter = () => {
       JSON.stringify(shoppingList)
     );
   }, [shoppingList, shoppingListOwner, user]);
+
+  useEffect(() => {
+    if (!user) {
+      setWeeklyBudgetSek(800);
+      setWeeklyBudgetOwner('');
+      return;
+    }
+
+    const storedValue = window.localStorage.getItem(`cartfilter-weekly-budget-${user.uid}`);
+    const storedBudget = storedValue === null ? Number.NaN : Number(storedValue);
+    setWeeklyBudgetSek(Number.isFinite(storedBudget) && storedBudget >= 0 ? storedBudget : 800);
+    setWeeklyBudgetOwner(user.uid);
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || weeklyBudgetOwner !== user.uid || weeklyBudgetSek === '') return;
+    window.localStorage.setItem(
+      `cartfilter-weekly-budget-${user.uid}`,
+      String(weeklyBudgetSek)
+    );
+  }, [user, weeklyBudgetOwner, weeklyBudgetSek]);
 
   const t = useMemo(() => buildTranslator(language), [language]);
   const locale = language === 'sv' ? 'sv-SE' : 'en-US';
@@ -848,7 +944,24 @@ const CartFilter = () => {
   }, [receipts, shoppingList]);
 
   const totalAcrossReceiptsSek = receipts.reduce((sum, receipt) => sum + receipt.totalSek, 0);
+  const startOfThisWeek = getStartOfWeek();
+  const startOfNextWeek = new Date(startOfThisWeek);
+  startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
+  const weeklySpentSek = receipts
+    .filter((receipt) => {
+      const receiptDate = new Date(`${receipt.date}T00:00:00`);
+      return !Number.isNaN(receiptDate.getTime())
+        && receiptDate >= startOfThisWeek
+        && receiptDate < startOfNextWeek;
+    })
+    .reduce((sum, receipt) => sum + (Number(receipt.totalSek) || 0), 0);
+  const weeklyBudgetValue = Number(weeklyBudgetSek) || 0;
+  const weeklyRemainingSek = weeklyBudgetValue - weeklySpentSek;
+  const weeklyBudgetProgress = weeklyBudgetValue > 0
+    ? Math.min((weeklySpentSek / weeklyBudgetValue) * 100, 100)
+    : 0;
 
+  // Updates one editable category row in the receipt form.
   const handleItemChange = (index, field, value) => {
     const nextItems = [...formData.items];
     nextItems[index] = {
@@ -858,6 +971,7 @@ const CartFilter = () => {
     setFormData((current) => ({ ...current, items: nextItems }));
   };
 
+  // Saves a user's product category correction for future receipts.
   const rememberCategory = async (name, categoryKey) => {
     if (!user || categoryKey === 'other') return;
     const normalizedName = normalizeProductKey(name);
@@ -880,6 +994,7 @@ const CartFilter = () => {
     }
   };
 
+  // Applies a category correction and recalculates receipt totals.
   const handleLineItemCategoryChange = async (index, categoryKey) => {
     const correctedItem = formData.lineItems[index];
     setFormData((current) => {
@@ -899,6 +1014,7 @@ const CartFilter = () => {
     await rememberCategory(correctedItem.name, categoryKey);
   };
 
+  // Adds unique products to the current shopping list.
   const addShoppingItems = (names, categoryKey = null) => {
     setShoppingList((current) => {
       const existingNames = new Set(current.map((item) => normalizeShoppingIdentity(item.name)));
@@ -914,12 +1030,14 @@ const CartFilter = () => {
     });
   };
 
+  // Adds all products from a predefined shopping-list template.
   const addCommonTemplate = (templateKey) => {
     addShoppingItems(
       COMMON_LIST_TEMPLATES[templateKey].map((itemKey) => t(`commonItems.${itemKey}`))
     );
   };
 
+  // Handles adding one manually entered shopping-list item.
   const handleAddShoppingItem = (event) => {
     event.preventDefault();
     if (!shoppingInput.trim()) return;
@@ -929,16 +1047,19 @@ const CartFilter = () => {
     setShoppingCategory('other');
   };
 
+  // Toggles whether a shopping-list item is completed.
   const toggleShoppingItem = (itemId) => {
     setShoppingList((current) => current.map((item) => (
       item.id === itemId ? { ...item, completed: !item.completed } : item
     )));
   };
 
+  // Removes one item from the shopping list.
   const removeShoppingItem = (itemId) => {
     setShoppingList((current) => current.filter((item) => item.id !== itemId));
   };
 
+  // Restores the receipt form and OCR state to their defaults.
   const resetForm = () => {
     setFormData({
       merchant: '',
@@ -958,26 +1079,42 @@ const CartFilter = () => {
     setOcrText('');
     setParseMessage('');
     setParseStatus('idle');
+    setReceiptNotice('');
   };
 
+  // Validates and saves a non-duplicate receipt to Firestore.
   const handleAddReceipt = async () => {
     if (totalSpentSek <= 0 || !user || receiptSaving) return;
 
     const cleanedItems = normalizedItems.filter((item) => item.amount > 0);
+    const receiptToSave = {
+      merchant: formData.merchant || 'Unknown Merchant',
+      date: formData.date,
+      currency: formData.currency,
+      source: formData.source,
+      items: cleanedItems,
+      lineItems: formData.lineItems,
+      totalSek: roundMoney(totalSpentSek),
+      imageUrl: formData.imageUrl || null,
+      storagePath: formData.storagePath || null
+    };
+    const receiptId = createReceiptFingerprint(receiptToSave);
+    const isDuplicate = receipts.some(
+      (receipt) => createReceiptFingerprint(receipt) === receiptId
+    );
+    if (isDuplicate) {
+      setReceiptNotice(t('duplicateReceipt'));
+      return;
+    }
+
     setReceiptSaving(true);
     setReceiptError('');
+    setReceiptNotice('');
 
     try {
-      await addDoc(collection(db, 'users', user.uid, 'receipts'), {
-        merchant: formData.merchant || 'Unknown Merchant',
-        date: formData.date,
-        currency: formData.currency,
-        source: formData.source,
-        items: cleanedItems,
-        lineItems: formData.lineItems,
-        totalSek: roundMoney(totalSpentSek),
-        imageUrl: formData.imageUrl || null,
-        storagePath: formData.storagePath || null,
+      await setDoc(doc(db, 'users', user.uid, 'receipts', receiptId), {
+        ...receiptToSave,
+        fingerprint: receiptId,
         createdAt: serverTimestamp()
       });
       resetForm();
@@ -990,6 +1127,7 @@ const CartFilter = () => {
     }
   };
 
+  // Parses OCR text and fills the editable receipt form.
   const applyOcrText = (text) => {
     setParseStatus('working');
     const parsed = parseReceiptText(text, formData.date, categoryMappings);
@@ -1014,10 +1152,12 @@ const CartFilter = () => {
     setParseMessage(t('parseSuccess'));
   };
 
+  // Starts parsing the OCR text currently shown in the text area.
   const handleParseReceipt = () => {
     applyOcrText(ocrText);
   };
 
+  // Validates and prepares a locally selected receipt image.
   const handleImageSelected = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -1049,6 +1189,7 @@ const CartFilter = () => {
     }
   };
 
+  // Uploads an image, runs OCR, and parses the extracted receipt text.
   const handleAnalyzeImage = async () => {
     if (!receiptImage) {
       setImageStatus('error');
@@ -1116,6 +1257,7 @@ const CartFilter = () => {
     }
   };
 
+  // Opens Google authentication and signs the user into Firebase.
   const handleGoogleSignIn = async () => {
     setAuthError('');
 
@@ -1128,6 +1270,7 @@ const CartFilter = () => {
     }
   };
 
+  // Signs the current user out of Firebase.
   const handleSignOut = async () => {
     try {
       await firebaseSignOut(auth);
@@ -1241,6 +1384,55 @@ const CartFilter = () => {
               {showForm ? t('hideForm') : t('importReceipt')}
             </button>
           </div>
+        </section>
+
+        <section className="mb-6 rounded-3xl border border-amber-100 bg-white p-6 shadow-md">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-stone-900">{t('weeklyBudget')}</h2>
+              <p className="mt-1 text-sm text-stone-600">
+                {t('spentThisWeek')}: {formatMoney(weeklySpentSek, displayCurrency, locale)}
+              </p>
+            </div>
+            <label className="text-sm font-medium text-stone-700">
+              {t('budgetInSek')}
+              <input
+                type="number"
+                min="0"
+                step="50"
+                value={weeklyBudgetSek}
+                onChange={(event) => {
+                  const { value } = event.target;
+                  setWeeklyBudgetSek(value === '' ? '' : Math.max(0, sanitizeNumber(value)));
+                }}
+                onBlur={() => {
+                  if (weeklyBudgetSek === '') setWeeklyBudgetSek(0);
+                }}
+                className="ml-2 w-32 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-right font-semibold text-stone-900"
+              />
+            </label>
+          </div>
+
+          <div className="mt-5 h-3 overflow-hidden rounded-full bg-amber-100">
+            <div
+              className={`h-full rounded-full ${
+                weeklyRemainingSek < 0 ? 'bg-red-500' : 'bg-amber-500'
+              }`}
+              style={{ width: `${weeklyBudgetProgress}%` }}
+            />
+          </div>
+
+          <div className="mt-3 flex items-center justify-between gap-4">
+            <span className="text-sm text-stone-600">{t('remainingThisWeek')}</span>
+            <strong className={weeklyRemainingSek < 0 ? 'text-red-600' : 'text-emerald-700'}>
+              {formatMoney(weeklyRemainingSek, displayCurrency, locale)}
+            </strong>
+          </div>
+          {weeklyRemainingSek < 0 && (
+            <p role="alert" className="mt-3 text-sm font-medium text-red-600">
+              {t('overBudget')}
+            </p>
+          )}
         </section>
 
         <section className="mb-6 rounded-3xl border border-amber-100 bg-white p-6 shadow-md">
@@ -1568,6 +1760,15 @@ const CartFilter = () => {
                   {t('currency')}: {displayCurrency} view, {formData.currency} receipt
                 </p>
               </div>
+
+              {receiptNotice && (
+                <p
+                  role="status"
+                  className="mt-4 rounded-2xl border border-amber-300 bg-amber-100 px-4 py-3 text-sm font-medium text-amber-900"
+                >
+                  {receiptNotice}
+                </p>
+              )}
 
               <div className="flex gap-2 mt-5">
                 <button

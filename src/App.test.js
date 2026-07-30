@@ -4,7 +4,6 @@ import CartFilter, { parseReceiptText } from './CartFilter';
 const mockSignInWithPopup = jest.fn();
 const mockOnAuthStateChanged = jest.fn();
 const mockOnSnapshot = jest.fn();
-const mockAddDoc = jest.fn();
 const mockSetDoc = jest.fn();
 
 jest.mock('./firebase', () => ({
@@ -20,7 +19,6 @@ jest.mock('firebase/auth', () => ({
 }));
 
 jest.mock('firebase/firestore', () => ({
-  addDoc: (...args) => mockAddDoc(...args),
   collection: (...path) => ({ path }),
   doc: (...path) => ({ path }),
   onSnapshot: (...args) => mockOnSnapshot(...args),
@@ -72,26 +70,81 @@ test('saves a receipt under the signed-in user', async () => {
     callback({ docs: [] });
     return jest.fn();
   });
-  mockAddDoc.mockResolvedValue({ id: 'receipt-1' });
+  mockSetDoc.mockResolvedValue();
 
   render(<CartFilter />);
 
   fireEvent.click(screen.getByRole('button', { name: /import receipt/i }));
-  const amountInputs = screen.getAllByRole('spinbutton');
-  fireEvent.change(amountInputs[0], { target: { value: '49.90' } });
+  const receiptAmountInput = screen
+    .getAllByRole('spinbutton')
+    .find((input) => input.getAttribute('step') === '0.01');
+  fireEvent.change(receiptAmountInput, { target: { value: '49.90' } });
   fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
 
   await waitFor(() => {
-    expect(mockAddDoc).toHaveBeenCalledWith(
+    expect(mockSetDoc).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: expect.arrayContaining(['users', 'user-1', 'receipts'])
+        path: expect.arrayContaining(['users', 'user-1', 'receipts', expect.stringMatching(/^receipt-/)])
       }),
       expect.objectContaining({
         totalSek: 49.9,
+        fingerprint: expect.stringMatching(/^receipt-/),
         createdAt: 'server-timestamp'
       })
     );
   });
+});
+
+test('does not save the same receipt twice', async () => {
+  const savedReceipt = {
+    merchant: 'Unknown Merchant',
+    date: new Date().toISOString().split('T')[0],
+    currency: 'SEK',
+    source: 'manual',
+    items: [{ key: 'meat', label: 'meat', amount: 49.9 }],
+    lineItems: [],
+    totalSek: 49.9,
+    imageUrl: null,
+    storagePath: null
+  };
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('receipts')) {
+      callback({
+        docs: [{ id: 'existing-receipt', data: () => savedReceipt }]
+      });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /import receipt/i }));
+  const receiptAmountInput = screen
+    .getAllByRole('spinbutton')
+    .find((input) => input.getAttribute('step') === '0.01');
+  fireEvent.change(receiptAmountInput, { target: { value: '49.90' } });
+  fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
+
+  expect(await screen.findByText(/already saved in history/i)).toBeInTheDocument();
+  expect(mockSetDoc).not.toHaveBeenCalled();
+});
+
+test('removes repeated OCR noise from a known merchant name', () => {
+  const parsed = parseReceiptText(
+    `ICA Kvantum Teleborg eee
+Org. nr: 556000-0000
+MJÖLK 20,00
+Totalt 1 varor
+Totalt 20,00 SEK`,
+    '2026-07-30'
+  );
+
+  expect(parsed.merchant).toBe('ICA Kvantum Teleborg');
 });
 
 test('parses the real Willys OCR text into Swedish grocery categories', () => {
