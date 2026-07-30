@@ -187,6 +187,44 @@ Totalt 186,89 SEK
   expect(parsed.lineItems[0].categoryKey).toBe('beverages');
 });
 
+test('parses Lidl VAT markers and stops before the payment section', () => {
+  const receiptText = `Växjö Teleborg, Smedsvängen 12A
+Org.nr: 969667-6312, lidl.se/kontakt
+SEK
+Kex Kakao 23,56 B
+Apelsin, 1,5kg 29,90 B
+Muffins SK1 7,50 x 2 15,00 B
+Cookies SK1 7,50 B
+Pastel de Nata 7,50 B
+ATT BETALA 83,46
+Kundens Kvitto
+Köp
+2026/07/27 08:57
+KÖPBELOPP SEK 83,46
+TOTALBELOPP SEK 83,46`;
+
+  const parsed = parseReceiptText(receiptText, '2026-07-30');
+  const categoryAmounts = Object.fromEntries(
+    parsed.items.map((item) => [item.key, Number(item.amount.toFixed(2))])
+  );
+
+  expect(parsed.merchant).toBe('Lidl');
+  expect(parsed.date).toBe('2026-07-27');
+  expect(parsed.total).toBe(83.46);
+  expect(parsed.lineItems).toHaveLength(5);
+  expect(parsed.lineItems.map((item) => item.name)).toEqual([
+    'Kex Kakao',
+    'Apelsin, 1,5kg',
+    'Muffins SK1 7,50 x 2',
+    'Cookies SK1',
+    'Pastel de Nata'
+  ]);
+  expect(categoryAmounts).toEqual({
+    snacks: 53.56,
+    fruits: 29.9
+  });
+});
+
 test('reuses a remembered category and treats price reduction as a discount', () => {
   const parsed = parseReceiptText(
     `ICA Nära

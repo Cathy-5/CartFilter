@@ -250,7 +250,7 @@ const CATEGORY_RULES = [
   { key: 'vegetables', score: 9, pattern: /\b(tomato|potato|onion|salad|carrot|pepper|broccoli|spinach|parsley|cucumber|gronsak|tomat|potatis|lok|gurka|morot|paprika|spenat|bladpersilja|persilja|sallad)\b/i },
   { key: 'dairy', score: 8, pattern: /\b(milk|cheese|yogurt|butter|cream|mejeri|mjolk|ost|smor|yoghurt)\b/i },
   { key: 'grains', score: 8, pattern: /\b(bread|brioche|brosche|broiche|rice|pasta|flour|oat|cereal|brod|ris|havre|mjol)\b/i },
-  { key: 'snacks', score: 8, pattern: /\b(chips|candy|chocolate|snack|cookie|biscuit|biscoff|godis|kex|choklad|muslibar|popcorn)\b/i },
+  { key: 'snacks', score: 8, pattern: /\b(chips|candy|chocolate|snack|cookie|cookies|biscuit|biscoff|muffin|muffins|pastel\s+de\s+nata|godis|kex|choklad|muslibar|popcorn)\b/i },
   { key: 'frozen', score: 7, pattern: /\b(frozen|ice cream|glass|fryst)\b/i },
   { key: 'pantry', score: 5, pattern: /\b(oil|salt|sugar|spice|sauce|beans|coffee|tea|krydda|socker|kaffe)\b/i },
   { key: 'household', score: 8, pattern: /\b(soap|detergent|paper|napkin|clean|disk|tvatt|hushall|toalett)\b/i },
@@ -466,7 +466,13 @@ const findMerchant = (lines) => {
   const knownMerchant = lines.find((line) => (
     /willys|ica|coop|lidl|hemkop|city\s*gross|tempo|mathem/i.test(normalizeForMatching(line))
   ));
-  if (knownMerchant) return knownMerchant;
+  if (knownMerchant) {
+    const normalized = normalizeForMatching(knownMerchant);
+    if (normalized.includes('lidl')) return 'Lidl';
+    return knownMerchant;
+  }
+
+  if (lines.some((line) => /969667[-\s]?6312/.test(line))) return 'Lidl';
 
   return lines.find((line) => {
     const normalized = normalizeForMatching(line);
@@ -510,14 +516,22 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
 
   const itemLines = [];
   const totalLine = lines.find((line) => (
-    /^(total|totalt|summa|att betala)\b/i.test(line)
-      && /-?\d+[.,]\d{2}\s*(sek|kr|eur|usd|€|\$)?$/i.test(line)
+    /^(total|totalt|summa|att betala|totalbelopp)\b/i.test(line)
+      && /-?\d+[.,]\d{2}(?:\s*[a-c])?$/i.test(line)
   ));
-  const totalAmountMatch = totalLine?.match(/(-?\d+[.,]\d{2})\s*(sek|kr|eur|usd|€|\$)?$/i);
+  const totalAmountMatch = totalLine?.match(/(-?\d+[.,]\d{2})(?:\s*[a-c])?$/i);
   let detectedTotal = totalAmountMatch ? sanitizeNumber(totalAmountMatch[1]) : 0;
-  const itemSectionEnd = lines.findIndex((line) => /totalt?\s+\d+\s+varor/i.test(line));
   const organizationLineIndex = lines.findIndex((line) => /org\.?\s*nr/i.test(line));
   const itemSectionStart = organizationLineIndex >= 0 ? organizationLineIndex + 1 : 0;
+  const relativeItemSectionEnd = lines
+    .slice(itemSectionStart)
+    .findIndex((line) => (
+      /totalt?\s+\d+\s+varor/i.test(line)
+      || /^att betala\b/i.test(normalizeForMatching(line))
+    ));
+  const itemSectionEnd = relativeItemSectionEnd >= 0
+    ? itemSectionStart + relativeItemSectionEnd
+    : -1;
   const possibleItemLines = itemSectionEnd >= 0
     ? lines.slice(itemSectionStart, itemSectionEnd)
     : lines.slice(itemSectionStart);
@@ -525,19 +539,20 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
   let lastProduct = null;
 
   for (const line of possibleItemLines) {
-    const amountMatch = line.match(/(-?\d+[.,]\d{2})\s*(sek|kr|eur|usd|€|\$)?$/i);
+    // Lidl appends a VAT code (for example "B") after each product price.
+    const amountMatch = line.match(/(-?\d+[.,]\d{2})(?:\s*(sek|kr|eur|usd|€|\$))?(?:\s+[a-c])?$/i);
     if (!amountMatch) {
       if (!isReceiptMetadata(line)) pendingLabel = line;
       continue;
     }
 
     const amount = sanitizeNumber(amountMatch[1]);
-    if (/(total|sum|att betala|totalt|subtotal|amount due)/i.test(line)) {
+    if (/(total|sum|att betala|totalt|subtotal|amount due|kopbelopp|köpbelopp)/i.test(line)) {
       detectedTotal = amount;
       continue;
     }
 
-    const inlineLabel = line.replace(amountMatch[0], '').trim();
+    const inlineLabel = line.slice(0, amountMatch.index).trim();
     const isOnlyQuantityAndUnitPrice = /^(?:\d+\s*)?(?:st\s*)?[*x+]\s*\d+[.,]\d{2}$/i.test(inlineLabel);
     const label = (
       (!inlineLabel || isOnlyQuantityAndUnitPrice)
