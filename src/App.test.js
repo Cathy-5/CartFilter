@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import CartFilter, {
   getCategoryRankColor,
   getReceiptFileKind,
@@ -913,6 +913,27 @@ TOTALBELOPP SEK 83,46`;
   });
 });
 
+test('parses Lidl campaign discounts, Lidl Plus discounts, and deposits', () => {
+  const parsed = parseReceiptText(`
+    Lidl
+    Gurka styck 14,90 x 3 44,70 C
+    Kampanjrabatt -15,00
+    Pistagenötter 49,90 C
+    Lidl Plus-rabatt -15,00
+    Pantburk 1,00 SE 2,00 C
+    Ärtor 18,88 C
+    ATT BETALA 66,58
+    Kort 66,58
+  `);
+
+  expect(parsed.lineItems).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'discount', amount: -15 }),
+    expect.objectContaining({ type: 'deposit', amount: 2 }),
+    expect.objectContaining({ type: 'product', name: 'Ärtor', amount: 18.88 })
+  ]));
+  expect(parsed.lineItems.filter((item) => item.type === 'discount')).toHaveLength(2);
+});
+
 test('parses ICA quantities, unit prices, and product-linked discounts', () => {
   const parsed = parseReceiptText(
     `ICA Kvantum Teleborg
@@ -1118,7 +1139,66 @@ test('prefills a learned shopping item with its receipt unit price', async () =>
   fireEvent.click(await screen.findByRole('button', { name: /^milk/i }));
 
   expect(screen.getByLabelText(/estimated price: milk/i)).toHaveValue(25);
-  expect(screen.getByText(/^within budget$/i)).toBeInTheDocument();
+  expect(screen.getByText(/after this list/i)).toHaveTextContent(/left/i);
+});
+
+test('uses the latest remembered price for the selected store', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('receipts')) {
+      callback({
+        docs: [
+          {
+            id: 'willys-receipt',
+            data: () => ({
+              merchant: 'Willys',
+              date: '2026-07-22',
+              currency: 'SEK',
+              items: [{ key: 'dairy', amount: 22 }],
+              lineItems: [{
+                name: 'Milk', type: 'product', categoryKey: 'dairy',
+                quantity: 1, unitPrice: 22, amount: 22
+              }],
+              totalSek: 22
+            })
+          },
+          {
+            id: 'ica-receipt',
+            data: () => ({
+              merchant: 'ICA',
+              date: '2026-07-21',
+              currency: 'SEK',
+              items: [{ key: 'dairy', amount: 27 }],
+              lineItems: [{
+                name: 'Milk', type: 'product', categoryKey: 'dairy',
+                quantity: 1, unitPrice: 27, amount: 27
+              }],
+              totalSek: 27
+            })
+          }
+        ]
+      });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /^shopping list$/i }));
+  fireEvent.click(screen.getByText(/^suggestions from your receipts$/i));
+  fireEvent.click(await screen.findByRole('button', { name: /^milk/i }));
+
+  expect(screen.getByLabelText(/estimated price: milk/i)).toHaveValue(22);
+  fireEvent.change(screen.getByRole('combobox', { name: /shopping at/i }), {
+    target: { value: 'ica' }
+  });
+
+  expect(screen.getByLabelText(/estimated price: milk/i)).toHaveValue(27);
+  expect(screen.getByText(/last paid at ica/i)).toHaveTextContent('SEK 27.00');
 });
 
 test('compares editable shopping estimates with the remaining weekly budget', async () => {
@@ -1136,8 +1216,27 @@ test('compares editable shopping estimates with the remaining weekly budget', as
   fireEvent.click(screen.getByRole('button', { name: /add weekly basics/i }));
   const milkPriceInput = screen.getByLabelText(/estimated price: milk/i);
 
+  fireEvent.click(screen.getByRole('button', { name: /^select all$/i }));
+  expect(screen.getAllByRole('checkbox').every((checkbox) => checkbox.checked)).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: /^unselect all$/i }));
+  expect(screen.getAllByRole('checkbox').every((checkbox) => !checkbox.checked)).toBe(true);
+  expect(screen.getByText(/^0 to buy$/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /view and save list/i })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole('button', { name: /^select all$/i }));
+  expect(screen.getAllByRole('checkbox').every((checkbox) => checkbox.checked)).toBe(true);
+  expect(screen.getByRole('button', { name: /view and save list/i })).toBeEnabled();
+
   fireEvent.change(milkPriceInput, { target: { value: '100' } });
-  expect(screen.getByText(/^within budget$/i)).toBeInTheDocument();
+  expect(screen.getByText(/after this list/i)).toHaveTextContent('SEK 700.00 left');
+
+  fireEvent.click(screen.getByRole('button', { name: /view and save list/i }));
+  const shoppingPlan = screen.getByRole('dialog', { name: /shopping plan/i });
+  expect(within(shoppingPlan).getByText(/weekly budget left/i)).toBeInTheDocument();
+  expect(within(shoppingPlan).getByText(/after this list/i)).toBeInTheDocument();
+  expect(within(shoppingPlan).getByRole('button', { name: /save as image/i })).toBeInTheDocument();
+  fireEvent.click(within(shoppingPlan).getByRole('button', { name: /close shopping view/i }));
 
   fireEvent.change(milkPriceInput, { target: { value: '900' } });
   expect(screen.getByText(/over budget by/i)).toHaveTextContent('SEK 100.00');
@@ -1190,6 +1289,23 @@ test('does not turn tax, payment, or total lines into products', () => {
 
   expect(parsed.lineItems).toEqual([
     expect.objectContaining({ name: 'MILK', amount: 12.5 })
+  ]);
+});
+
+test('ignores ICA payment and rounding footer rows after the product section', () => {
+  const parsed = parseReceiptText(`
+    ICA Kvantum Teleborg
+    ÄRTOR 18,88
+    Totalt 1 varor
+    Totalt 18,88 SEK
+    Avrundning 0,00
+    Betalat 18,88
+    Kort 18,88
+    Köp 18,88 SEK
+  `);
+
+  expect(parsed.lineItems).toEqual([
+    expect.objectContaining({ name: 'ÄRTOR', amount: 18.88 })
   ]);
 });
 

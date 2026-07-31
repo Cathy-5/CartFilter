@@ -7,6 +7,7 @@ import {
 } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   orderBy,
@@ -26,6 +27,7 @@ import {
   ChevronUp,
   CircleDollarSign,
   Coins,
+  Download,
   FileUp,
   Globe2,
   Home,
@@ -81,6 +83,12 @@ const OCR_LANGUAGE_CODES = {
   en: ['eng']
 };
 const SUPPORTED_RECEIPT_LANGUAGES = new Set(Object.keys(OCR_LANGUAGE_CODES));
+const isShoppingItemSelected = (item) => item.selected !== false;
+const normalizeShoppingListSelection = (items) => items.map((item) => ({
+  ...item,
+  selected: item.selected !== false,
+  completed: false
+}));
 const EXCHANGE_RATES = {
   SEK: 1,
   EUR: 11.4,
@@ -125,7 +133,11 @@ const TRANSLATIONS = {
     signInError: 'Google sign-in did not complete. Please try again.',
     receiptLoadError: 'Your saved receipts could not be loaded. Check the Firestore rules and try again.',
     receiptSaveError: 'The receipt could not be saved. Please try again.',
+    receiptSaveBlocked: 'Add a date and total, then confirm any receipt warnings before saving.',
     duplicateReceipt: 'Already saved in history.',
+    deleteReceipt: 'Remove receipt',
+    confirmDeleteReceipt: 'Remove this receipt from your history?',
+    receiptDeleted: 'Receipt removed from history.',
     loadingReceipts: 'Loading your receipts...',
     savingReceipt: 'Saving...',
     welcome: 'Smart grocery receipt tracking',
@@ -209,6 +221,7 @@ const TRANSLATIONS = {
     advancedDetails: 'Advanced details',
     back: 'Back',
     next: 'Next',
+    goTo: 'Go to',
     step: 'Step',
     uploadStep: 'Add receipt',
     detailsStep: 'Check details',
@@ -270,8 +283,32 @@ const TRANSLATIONS = {
     itemPlaceholder: 'Milk, tomatoes, rice...',
     removeItem: 'Remove',
     clearCompleted: 'Clear completed',
+    selectAll: 'Select all',
+    unselectAll: 'Unselect all',
     emptyShoppingList: 'Your shopping list is empty.',
     estimatedPrice: 'Estimated price',
+    shoppingAt: 'Shopping at',
+    storeNotDecided: 'Not decided',
+    lastPaidAt: 'Last paid at',
+    typicalRange: 'Typical range',
+    addEstimate: 'Add estimate',
+    noStorePriceHistory: 'No price history at this store yet.',
+    starterLists: 'Quick starter lists',
+    starterListsHint: 'Predefined suggestions you can edit after adding.',
+    shoppingView: 'Shopping view',
+    viewAndSaveList: 'View and save list',
+    shoppingListReady: 'Ready to shop?',
+    shoppingListReadyHint: 'Review this list in Shopping view, then save it as an image.',
+    selectItemsToContinue: 'Select at least one item to open Shopping view.',
+    shoppingPlan: 'Shopping plan',
+    saveAsImage: 'Save as image',
+    closeShoppingView: 'Close shopping view',
+    weeklyBudgetLeft: 'Weekly budget left',
+    budgetAfterShopping: 'After this list',
+    left: 'left',
+    shoppingDaysLeft: 'Shopping days left',
+    noShoppingDaysLeft: 'No planned shopping days left.',
+    shoppingDaysAdvisory: 'This is a planning reminder, not a restriction.',
     itemsToBuy: 'to buy',
     scrollForMore: 'Scroll for more',
     estimatedListTotal: 'Estimated list total',
@@ -331,7 +368,11 @@ const TRANSLATIONS = {
     signInError: 'Google-inloggningen slutfordes inte. Forsok igen igen.',
     receiptLoadError: 'Dina sparade kvitton kunde inte laddas. Kontrollera Firestore-reglerna och forsok igen.',
     receiptSaveError: 'Kvittot kunde inte sparas. Forsok igen.',
+    receiptSaveBlocked: 'Lägg till datum och totalsumma och bekräfta eventuella kvittovarningar innan du sparar.',
     duplicateReceipt: 'Redan sparat i historiken.',
+    deleteReceipt: 'Ta bort kvitto',
+    confirmDeleteReceipt: 'Ta bort kvittot från historiken?',
+    receiptDeleted: 'Kvittot har tagits bort från historiken.',
     loadingReceipts: 'Laddar dina kvitton...',
     savingReceipt: 'Sparar...',
     welcome: 'Smart kvittosparning for matinkop',
@@ -415,6 +456,7 @@ const TRANSLATIONS = {
     advancedDetails: 'Avancerade detaljer',
     back: 'Tillbaka',
     next: 'Nästa',
+    goTo: 'Gå till',
     step: 'Steg',
     uploadStep: 'Lägg till kvitto',
     detailsStep: 'Kontrollera detaljer',
@@ -476,8 +518,32 @@ const TRANSLATIONS = {
     itemPlaceholder: 'Mjolk, tomater, ris...',
     removeItem: 'Ta bort',
     clearCompleted: 'Ta bort avklarade',
+    selectAll: 'Markera alla',
+    unselectAll: 'Avmarkera alla',
     emptyShoppingList: 'Din inkopslista ar tom.',
     estimatedPrice: 'Beräknat pris',
+    shoppingAt: 'Handlar hos',
+    storeNotDecided: 'Inte bestämt',
+    lastPaidAt: 'Senast betalat hos',
+    typicalRange: 'Vanligt prisintervall',
+    addEstimate: 'Lägg till uppskattning',
+    noStorePriceHistory: 'Ingen prishistorik för den här butiken ännu.',
+    starterLists: 'Snabba startlistor',
+    starterListsHint: 'Fördefinierade förslag som du kan redigera efteråt.',
+    shoppingView: 'Inköpsvy',
+    viewAndSaveList: 'Visa och spara listan',
+    shoppingListReady: 'Redo att handla?',
+    shoppingListReadyHint: 'Granska listan i inköpsvyn och spara den sedan som en bild.',
+    selectItemsToContinue: 'Markera minst en vara för att öppna inköpsvyn.',
+    shoppingPlan: 'Inköpsplan',
+    saveAsImage: 'Spara som bild',
+    closeShoppingView: 'Stäng inköpsvyn',
+    weeklyBudgetLeft: 'Veckobudget kvar',
+    budgetAfterShopping: 'Efter den här listan',
+    left: 'kvar',
+    shoppingDaysLeft: 'Inköpsdagar kvar',
+    noShoppingDaysLeft: 'Inga planerade inköpsdagar kvar.',
+    shoppingDaysAdvisory: 'Detta är en planeringspåminnelse, inte en begränsning.',
     itemsToBuy: 'kvar att köpa',
     scrollForMore: 'Rulla för fler',
     estimatedListTotal: 'Beräknad totalsumma',
@@ -569,7 +635,7 @@ const CATEGORY_RULES = [
 ];
 
 const RECEIPT_TOTAL_LABEL_PATTERN = /^(?:total\s+ttc|net\s+ttc(?:\s+eur)?|a\s+payer|montant\s+total|att\s+betala|totalbelopp|amount\s+due|kopbelopp|totalt|summa|total)\b/i;
-const RECEIPT_NON_PRODUCT_PATTERN = /^(?:tva|vat|h\.?\s*t\.?|tax|moms|total\s+ht|subtotal|sous[-\s]?total|card|carte|cash|especes|change|rendu|monnaie|mastercard|visa|payment|paiement)\b/i;
+const RECEIPT_NON_PRODUCT_PATTERN = /^(?:tva|vat|h\.?\s*t\.?|tax|moms|total\s+ht|subtotal|sous[-\s]?total|card|carte|cash|especes|change|rendu|monnaie|mastercard|visa|payment|paiement|betalat|kort|kop|köp|avrundning|rounding)\b/i;
 const RECEIPT_AMOUNT_END_PATTERN = /(-?\d+[.,]\d{2})(?:\s*(?:sek|kr|eur|usd|€|\$))?(?:\s*[a-c])?$/i;
 
 const DEFAULT_CATEGORY_KEYS = ['meat', 'fruits', 'vegetables', 'dairy', 'grains', 'pantry', 'snacks', 'beverages', 'alcohol', 'preparedMeals'];
@@ -1283,9 +1349,9 @@ const parseReceiptText = (
     const isDepositReturn = /\b(pantretur|pant\s*retur|deposit\s*return)\b/i.test(normalizedLabel);
     const isDiscount = !isDepositReturn && (
       amount < 0
-      || /\b(rabatt|discount|remise|reduction|prisnedsattning|prisnedsatt|nedsattning|prisavdrag)\b|willys\s*plus\s*:/i.test(normalizedLabel)
+      || /\b(rabatt|kampanjrabatt|discount|remise|reduction|prisnedsattning|prisnedsatt|nedsattning|prisavdrag)\b|(?:willys|lidl)\s*plus\s*[-:]?\s*rabatt/i.test(normalizedLabel)
     );
-    const isDeposit = /(?:^|\s|\+)pant(?:\s|$)/i.test(normalizedLabel);
+    const isDeposit = /(?:^|\s|\+)pant(?:burk|\s|$)/i.test(normalizedLabel);
     const inlineQuantityMatch = inlineLabel.match(
       /(?:^|\s)(\d+(?:[.,]\d+)?)\s*(?:(?:each|st|pcs?)\s*)?[*x+×]\s*(?:sek|kr)?\s*(\d+[.,]\d{2})/i
     );
@@ -1306,7 +1372,7 @@ const parseReceiptText = (
     );
     const discountSubject = isDiscount
       ? normalizeProductKey(
-        label.replace(/^.*?(rabatt|discount|prisnedsättning|prisnedsatt|nedsättning|prisavdrag|willys\s*plus)\s*:?\s*/i, '')
+        label.replace(/^.*?(rabatt|kampanjrabatt|discount|prisnedsättning|prisnedsatt|nedsättning|prisavdrag|willys\s*plus|lidl\s*plus)\s*[-:]?\s*/i, '')
       )
       : '';
     const namedDiscountProduct = discountSubject
@@ -1414,6 +1480,8 @@ const CartFilter = () => {
   const [shoppingList, setShoppingList] = useState([]);
   const [shoppingInput, setShoppingInput] = useState('');
   const [shoppingCategory, setShoppingCategory] = useState('other');
+  const [shoppingStore, setShoppingStore] = useState('');
+  const [shoppingViewOpen, setShoppingViewOpen] = useState(false);
   const [shoppingListOwner, setShoppingListOwner] = useState('');
   const [categoryMappings, setCategoryMappings] = useState({});
   const [productAliases, setProductAliases] = useState({});
@@ -1493,6 +1561,7 @@ const CartFilter = () => {
   useEffect(() => {
     if (!user) {
       setShoppingList([]);
+      setShoppingStore('');
       setShoppingListOwner('');
       setSettingsLoaded(false);
       setSettingsOwner('');
@@ -1505,7 +1574,9 @@ const CartFilter = () => {
     const key = `cartfilter-shopping-list-${user.uid}`;
     try {
       const storedList = JSON.parse(window.localStorage.getItem(key) || '[]');
-      setShoppingList(Array.isArray(storedList) ? storedList : []);
+      setShoppingList(
+        Array.isArray(storedList) ? normalizeShoppingListSelection(storedList) : []
+      );
     } catch (error) {
       console.error('Failed to restore shopping list', error);
       setShoppingList([]);
@@ -1535,7 +1606,10 @@ const CartFilter = () => {
             setWeeklyShoppingDayLimit(Number(settings.weeklyShoppingDayLimit));
           }
           if (Array.isArray(settings.shoppingList)) {
-            setShoppingList(settings.shoppingList);
+            setShoppingList(normalizeShoppingListSelection(settings.shoppingList));
+          }
+          if (typeof settings.shoppingStore === 'string') {
+            setShoppingStore(settings.shoppingStore);
           }
           if (typeof settings.preferredName === 'string' && settings.preferredName.trim()) {
             const savedName = settings.preferredName.trim();
@@ -1564,6 +1638,7 @@ const CartFilter = () => {
       weeklyBudgetSek: Number(weeklyBudgetSek) || 0,
       weeklyShoppingDayLimit: Number(weeklyShoppingDayLimit) || 1,
       shoppingList,
+      shoppingStore,
       preferredName: preferredName.trim(),
       updatedAt: serverTimestamp()
     }, { merge: true })).catch((error) => {
@@ -1572,6 +1647,7 @@ const CartFilter = () => {
   }, [
     preferredName,
     shoppingList,
+    shoppingStore,
     weeklyBudgetSek,
     weeklyShoppingDayLimit,
     settingsLoaded,
@@ -1868,6 +1944,71 @@ const CartFilter = () => {
   }, [categoryData, categoryTotalSek, translatedCategoryLabel]);
   const largestChartCategory = chartCategoryData[0] || null;
 
+  const shoppingStoreOptions = useMemo(() => {
+    const stores = new Map();
+    receipts.forEach((receipt) => {
+      const name = String(receipt.merchant || '').trim();
+      const key = normalizeProductKey(name);
+      if (key && key !== 'unknown merchant' && !stores.has(key)) stores.set(key, name);
+    });
+    return [...stores.entries()]
+      .map(([key, name]) => ({ key, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, locale));
+  }, [locale, receipts]);
+
+  const productPriceHistory = useMemo(() => {
+    const history = new Map();
+    receipts.forEach((receipt) => {
+      const store = String(receipt.merchant || '').trim();
+      const storeKey = normalizeProductKey(store);
+      const timestamp = new Date(`${receipt.date || ''}T00:00:00`).getTime() || 0;
+      (receipt.lineItems || [])
+        .filter((item) => item.type === 'product' && Number(item.amount) > 0)
+        .forEach((item) => {
+          const productKey = normalizeShoppingIdentity(item.name);
+          const priceSek = normalizeToSek(item.unitPrice || item.amount, receipt.currency);
+          if (!productKey || priceSek <= 0) return;
+          const observations = history.get(productKey) || [];
+          observations.push({ priceSek, store, storeKey, timestamp });
+          history.set(productKey, observations);
+        });
+    });
+    history.forEach((observations) => observations.sort((a, b) => b.timestamp - a.timestamp));
+    return history;
+  }, [receipts]);
+
+  const getShoppingPriceInfo = useCallback((name, storeKey = shoppingStore) => {
+    const observations = productPriceHistory.get(normalizeShoppingIdentity(name)) || [];
+    const relevant = storeKey
+      ? observations.filter((observation) => observation.storeKey === storeKey)
+      : observations;
+    if (relevant.length === 0) return null;
+    return {
+      latest: relevant[0],
+      minimumSek: Math.min(...relevant.map((observation) => observation.priceSek)),
+      maximumSek: Math.max(...relevant.map((observation) => observation.priceSek)),
+      count: relevant.length
+    };
+  }, [productPriceHistory, shoppingStore]);
+
+  useEffect(() => {
+    setShoppingList((current) => {
+      let changed = false;
+      const updated = current.map((item) => {
+        if (item.priceManuallyEdited || Number(item.estimatedPriceSek) > 0) return item;
+        const priceInfo = getShoppingPriceInfo(item.name);
+        if (!priceInfo) return item;
+        changed = true;
+        return {
+          ...item,
+          estimatedPriceSek: priceInfo.latest.priceSek,
+          priceManuallyEdited: false
+        };
+      });
+      return changed ? updated : current;
+    });
+  }, [getShoppingPriceInfo]);
+
   const learnedShoppingSuggestions = useMemo(() => {
     const learnedProducts = new Map();
 
@@ -1968,16 +2109,25 @@ const CartFilter = () => {
     : ['on-track', 'reached'].includes(weeklyBudgetStatus.tone)
       ? CheckCircle2
       : AlertTriangle;
-  const shoppingListEstimatedTotalSek = shoppingList.reduce(
+  const selectedShoppingItems = shoppingList.filter(isShoppingItemSelected);
+  const shoppingListEstimatedTotalSek = selectedShoppingItems.reduce(
     (sum, item) => sum + (Number(item.estimatedPriceSek) || 0),
     0
   );
-  const hasShoppingListEstimates = shoppingList.some(
+  const hasShoppingListEstimates = selectedShoppingItems.some(
     (item) => Number(item.estimatedPriceSek) > 0
   );
-  const shoppingItemsToBuy = shoppingList.filter((item) => !item.completed).length;
+  const shoppingItemsToBuy = selectedShoppingItems.length;
   const shoppingListBudgetDifferenceSek = weeklyRemainingSek - shoppingListEstimatedTotalSek;
   const shoppingListIsWithinBudget = shoppingListEstimatedTotalSek <= weeklyRemainingSek;
+  const shoppingBudgetAfterListSek = weeklyRemainingSek - shoppingListEstimatedTotalSek;
+  const shoppingDaysRemaining = Math.max(
+    0,
+    Number(weeklyShoppingDayLimit) - weeklyShoppingDayCount
+  );
+  const selectedShoppingStoreName = shoppingStoreOptions.find(
+    (store) => store.key === shoppingStore
+  )?.name || t('storeNotDecided');
   const preferredFirstName = preferredName.trim().split(/\s+/)[0] || '';
   const greetingReady = settingsLoaded && !receiptsLoading;
   const homeGreeting = `${t(receipts.length > 0 ? 'welcomeBack' : 'welcomeToCartFilter')}${
@@ -2189,13 +2339,18 @@ const CartFilter = () => {
       const existingNames = new Set(current.map((item) => normalizeShoppingIdentity(item.name)));
       const additions = names
         .filter((name) => name.trim() && !existingNames.has(normalizeShoppingIdentity(name)))
-        .map((name, index) => ({
-          id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
-          name: name.trim(),
-          categoryKey,
-          completed: false,
-          estimatedPriceSek
-        }));
+        .map((name, index) => {
+          const priceInfo = getShoppingPriceInfo(name);
+          return {
+            id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+            name: name.trim(),
+            categoryKey,
+            selected: true,
+            completed: false,
+            estimatedPriceSek: priceInfo?.latest.priceSek || estimatedPriceSek,
+            priceManuallyEdited: false
+          };
+        });
       return [...current, ...additions];
     });
   };
@@ -2217,11 +2372,22 @@ const CartFilter = () => {
     setShoppingCategory('other');
   };
 
-  // Toggles whether a shopping-list item is completed.
-  const toggleShoppingItem = (itemId) => {
+  // Includes or excludes one item from the current shopping trip.
+  const toggleShoppingItemSelection = (itemId) => {
     setShoppingList((current) => current.map((item) => (
-      item.id === itemId ? { ...item, completed: !item.completed } : item
+      item.id === itemId
+        ? { ...item, selected: !isShoppingItemSelected(item), completed: false }
+        : item
     )));
+  };
+
+  // Includes or excludes every item from the current shopping trip.
+  const setAllShoppingItemsSelected = (selected) => {
+    setShoppingList((current) => current.map((item) => ({
+      ...item,
+      selected,
+      completed: false
+    })));
   };
 
   // Removes one item from the shopping list.
@@ -2236,8 +2402,104 @@ const CartFilter = () => {
       displayCurrency
     );
     setShoppingList((current) => current.map((item) => (
-      item.id === itemId ? { ...item, estimatedPriceSek } : item
+      item.id === itemId
+        ? { ...item, estimatedPriceSek, priceManuallyEdited: true }
+        : item
     )));
+  };
+
+  // Updates automatic estimates when the planned store changes.
+  const handleShoppingStoreChange = (storeKey) => {
+    setShoppingStore(storeKey);
+    setShoppingList((current) => current.map((item) => {
+      if (item.priceManuallyEdited) return item;
+      const priceInfo = getShoppingPriceInfo(item.name, storeKey);
+      return {
+        ...item,
+        estimatedPriceSek: priceInfo?.latest.priceSek || 0
+      };
+    }));
+  };
+
+  // Exports the current shopping plan as a phone-friendly PNG image.
+  const downloadShoppingPlanImage = () => {
+    const itemsToExport = shoppingList.filter(isShoppingItemSelected);
+    const width = 1080;
+    const height = Math.max(1180, 610 + itemsToExport.length * 74);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    context.fillStyle = '#fffaf0';
+    context.fillRect(0, 0, width, height);
+    context.fillStyle = '#302923';
+    context.font = '700 54px Manrope, sans-serif';
+    context.fillText(t('shoppingPlan'), 72, 100);
+    context.fillStyle = '#8f5c10';
+    context.font = '600 28px Manrope, sans-serif';
+    context.fillText(`${t('shoppingAt')}: ${selectedShoppingStoreName}`, 72, 150);
+
+    const summaryRows = [
+      [t('weeklyBudgetLeft'), formatMoney(weeklyRemainingSek, displayCurrency, locale)],
+      [t('estimatedListTotal'), formatMoney(shoppingListEstimatedTotalSek, displayCurrency, locale)],
+      [
+        t('budgetAfterShopping'),
+        shoppingBudgetAfterListSek >= 0
+          ? `${formatMoney(shoppingBudgetAfterListSek, displayCurrency, locale)} ${t('left')}`
+          : `${t('overPlannedBudget')} ${formatMoney(
+            Math.abs(shoppingBudgetAfterListSek),
+            displayCurrency,
+            locale
+          )}`
+      ],
+      [t('shoppingDaysLeft'), String(shoppingDaysRemaining)]
+    ];
+    summaryRows.forEach(([label, value], index) => {
+      const x = index % 2 === 0 ? 72 : 560;
+      const y = 235 + Math.floor(index / 2) * 105;
+      context.fillStyle = '#756b62';
+      context.font = '500 22px Manrope, sans-serif';
+      context.fillText(label, x, y);
+      context.fillStyle = '#302923';
+      context.font = '700 32px Manrope, sans-serif';
+      context.fillText(value, x, y + 42);
+    });
+
+    let y = 490;
+    context.fillStyle = '#302923';
+    context.font = '700 30px Manrope, sans-serif';
+    context.fillText(`${itemsToExport.length} ${t('itemsToBuy')}`, 72, y);
+    y += 48;
+
+    itemsToExport.forEach((item, index) => {
+      context.fillStyle = index % 2 === 0 ? '#ffffff' : '#fff6e6';
+      context.fillRect(60, y - 34, width - 120, 62);
+      context.fillStyle = '#3b332c';
+      context.font = '600 25px Manrope, sans-serif';
+      const itemName = item.name.length > 42 ? `${item.name.slice(0, 39)}…` : item.name;
+      context.fillText(`□  ${itemName}`, 82, y + 6);
+      context.textAlign = 'right';
+      context.fillText(
+        item.estimatedPriceSek > 0
+          ? formatMoney(item.estimatedPriceSek, displayCurrency, locale)
+          : t('addEstimate'),
+        width - 82,
+        y + 6
+      );
+      context.textAlign = 'left';
+      y += 74;
+    });
+
+    context.fillStyle = '#70675f';
+    context.font = '500 20px Manrope, sans-serif';
+    context.fillText('CartFilter', 72, height - 55);
+
+    const link = document.createElement('a');
+    link.download = `cartfilter-shopping-plan-${formatDateForInput()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
   };
 
   // Restores the receipt form and OCR state to their defaults.
@@ -2365,6 +2627,20 @@ const CartFilter = () => {
       setReceiptError(t('receiptSaveError'));
     } finally {
       setReceiptSaving(false);
+    }
+  };
+
+  // Removes one saved receipt after the user confirms the action.
+  const handleDeleteReceipt = async (receipt) => {
+    if (!user || !receipt?.id || !window.confirm(t('confirmDeleteReceipt'))) return;
+
+    try {
+      await deleteDoc(doc(db, 'users', user.uid, 'receipts', receipt.id));
+      setReceipts((current) => current.filter((item) => item.id !== receipt.id));
+      setReceiptNotice(t('receiptDeleted'));
+    } catch (error) {
+      console.error('Failed to delete Firestore receipt', error);
+      setReceiptError(t('receiptSaveError'));
     }
   };
 
@@ -3099,16 +3375,24 @@ const CartFilter = () => {
                 <p className="text-sm text-stone-600">{t('shoppingListHint')}</p>
               </div>
             </div>
-            {shoppingList.some((item) => item.completed) && (
-              <button
-                type="button"
-                onClick={() => setShoppingList((current) => current.filter((item) => !item.completed))}
-                className="text-sm font-semibold text-amber-700"
-              >
-                {t('clearCompleted')}
-              </button>
-            )}
           </div>
+
+          {shoppingStoreOptions.length > 0 && (
+            <label className="shopping-store-control">
+              <span>{t('shoppingAt')}</span>
+              <StyledSelect
+                value={shoppingStore}
+                onChange={(event) => handleShoppingStoreChange(event.target.value)}
+                aria-label={t('shoppingAt')}
+                wrapperClassName="shopping-store-select"
+              >
+                <option value="">{t('storeNotDecided')}</option>
+                {shoppingStoreOptions.map((store) => (
+                  <option key={store.key} value={store.key}>{store.name}</option>
+                ))}
+              </StyledSelect>
+            </label>
+          )}
 
           <form onSubmit={handleAddShoppingItem} className="shopping-composer mt-5">
             <input
@@ -3145,7 +3429,11 @@ const CartFilter = () => {
             </button>
           </form>
 
-          <div className="shopping-templates mt-3">
+          <div className="shopping-template-intro">
+            <strong>{t('starterLists')}</strong>
+            <span>{t('starterListsHint')}</span>
+          </div>
+          <div className="shopping-templates mt-2">
             <button
               type="button"
               onClick={() => addCommonTemplate('weeklyBasics')}
@@ -3197,6 +3485,14 @@ const CartFilter = () => {
                   {shoppingItemsToBuy} {t('itemsToBuy')}
                 </strong>
                 <span>{t('estimatedPrice')}</span>
+                <div className="shopping-selection-actions">
+                  <button type="button" onClick={() => setAllShoppingItemsSelected(true)}>
+                    {t('selectAll')}
+                  </button>
+                  <button type="button" onClick={() => setAllShoppingItemsSelected(false)}>
+                    {t('unselectAll')}
+                  </button>
+                </div>
                 {shoppingList.length > 5 && (
                   <small>{t('scrollForMore')}</small>
                 )}
@@ -3206,19 +3502,22 @@ const CartFilter = () => {
                 tabIndex={shoppingList.length > 5 ? 0 : undefined}
                 aria-label={t('shoppingList')}
               >
-                {shoppingList.map((item) => (
-                  <div
-                    key={item.id}
-                    className="shopping-list-row"
-                  >
+                {shoppingList.map((item) => {
+                  const priceInfo = getShoppingPriceInfo(item.name);
+                  const isSelected = isShoppingItemSelected(item);
+                  return (
+                    <div
+                      key={item.id}
+                      className="shopping-list-row"
+                    >
                     <input
                       type="checkbox"
-                      checked={item.completed}
-                      onChange={() => toggleShoppingItem(item.id)}
+                      checked={isSelected}
+                      onChange={() => toggleShoppingItemSelection(item.id)}
                       aria-label={item.name}
                     />
                     <div className="shopping-item-name">
-                      <span className={`block text-sm ${item.completed ? 'text-stone-400 line-through' : 'text-stone-800'}`}>
+                      <span className={`block text-sm ${isSelected ? 'text-stone-800' : 'text-stone-400'}`}>
                         {item.name}
                       </span>
                       {item.categoryKey && item.categoryKey !== 'other' && (
@@ -3226,6 +3525,21 @@ const CartFilter = () => {
                           {translatedCategoryLabel(item.categoryKey)}
                         </span>
                       )}
+                      {priceInfo ? (
+                        <span className="shopping-price-memory">
+                          {t('lastPaidAt')} {priceInfo.latest.store}:{' '}
+                          {formatMoney(priceInfo.latest.priceSek, displayCurrency, locale)}
+                          {priceInfo.count > 1 && priceInfo.minimumSek !== priceInfo.maximumSek && (
+                            <small>
+                              {t('typicalRange')}: {formatMoney(priceInfo.minimumSek, displayCurrency, locale)}–{formatMoney(priceInfo.maximumSek, displayCurrency, locale)}
+                            </small>
+                          )}
+                        </span>
+                      ) : shoppingStore ? (
+                        <span className="shopping-price-memory is-empty">
+                          {t('noStorePriceHistory')}
+                        </span>
+                      ) : null}
                     </div>
                     <label className="shopping-price-control">
                       <input
@@ -3246,7 +3560,7 @@ const CartFilter = () => {
                           event.target.value
                         )}
                         aria-label={`${t('estimatedPrice')}: ${item.name}`}
-                        placeholder="0.00"
+                        placeholder={t('addEstimate')}
                       />
                       <span>{displayCurrency}</span>
                     </label>
@@ -3259,8 +3573,9 @@ const CartFilter = () => {
                     >
                       <X aria-hidden="true" />
                     </button>
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -3280,13 +3595,14 @@ const CartFilter = () => {
                 </strong>
               </div>
 
-              {!hasShoppingListEstimates && (
+              {shoppingItemsToBuy > 0 && !hasShoppingListEstimates && (
                 <p className="mt-2 text-sm text-stone-600">{t('addEstimatedPrices')}</p>
               )}
 
               {hasShoppingListEstimates && shoppingListIsWithinBudget && (
                 <p className="mt-2 text-sm font-semibold text-emerald-700">
-                  {t('withinBudget')}
+                  {t('budgetAfterShopping')}: {' '}
+                  {formatMoney(shoppingBudgetAfterListSek, displayCurrency, locale)} {t('left')}
                 </p>
               )}
 
@@ -3300,6 +3616,94 @@ const CartFilter = () => {
                   )}
                 </p>
               )}
+
+              <p className={`shopping-days-list-note ${shoppingDaysRemaining === 0 ? 'is-warning' : ''}`}>
+                <CalendarDays aria-hidden="true" />
+                <span>
+                  {shoppingDaysRemaining > 0
+                    ? `${shoppingDaysRemaining} ${t('shoppingDaysLeft').toLocaleLowerCase(locale)}`
+                    : t('noShoppingDaysLeft')}
+                  {shoppingDaysRemaining === 0 && <small>{t('shoppingDaysAdvisory')}</small>}
+                </span>
+              </p>
+
+              <div className="shopping-ready-action">
+                <div>
+                  <strong>{t('shoppingListReady')}</strong>
+                  <span>
+                    {shoppingItemsToBuy > 0
+                      ? t('shoppingListReadyHint')
+                      : t('selectItemsToContinue')}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShoppingViewOpen(true)}
+                  disabled={shoppingItemsToBuy === 0}
+                >
+                  <ShoppingBag aria-hidden="true" />
+                  {t('viewAndSaveList')}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {shoppingViewOpen && (
+            <div className="shopping-view-backdrop" role="presentation">
+              <section className="shopping-view-card" role="dialog" aria-modal="true" aria-label={t('shoppingPlan')}>
+                <div className="shopping-view-header">
+                  <div>
+                    <span>{t('shoppingAt')}</span>
+                    <h2>{selectedShoppingStoreName}</h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShoppingViewOpen(false)}
+                    aria-label={t('closeShoppingView')}
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="shopping-view-metrics">
+                  <div><span>{t('weeklyBudgetLeft')}</span><strong>{formatMoney(weeklyRemainingSek, displayCurrency, locale)}</strong></div>
+                  <div><span>{t('estimatedListTotal')}</span><strong>{formatMoney(shoppingListEstimatedTotalSek, displayCurrency, locale)}</strong></div>
+                  <div>
+                    <span>{t('budgetAfterShopping')}</span>
+                    <strong>
+                      {shoppingBudgetAfterListSek >= 0
+                        ? `${formatMoney(shoppingBudgetAfterListSek, displayCurrency, locale)} ${t('left')}`
+                        : `${t('overPlannedBudget')} ${formatMoney(
+                          Math.abs(shoppingBudgetAfterListSek),
+                          displayCurrency,
+                          locale
+                        )}`}
+                    </strong>
+                  </div>
+                  <div><span>{t('shoppingDaysLeft')}</span><strong>{shoppingDaysRemaining}</strong></div>
+                </div>
+                {shoppingDaysRemaining === 0 && (
+                  <p className="shopping-view-warning">
+                    <AlertTriangle aria-hidden="true" />
+                    <span>{t('noShoppingDaysLeft')} <small>{t('shoppingDaysAdvisory')}</small></span>
+                  </p>
+                )}
+                <div className="shopping-view-items">
+                  {shoppingList.filter(isShoppingItemSelected).map((item) => (
+                    <div key={`shopping-view-${item.id}`}>
+                      <span><i aria-hidden="true" />{item.name}</span>
+                      <strong>
+                        {item.estimatedPriceSek > 0
+                          ? formatMoney(item.estimatedPriceSek, displayCurrency, locale)
+                          : t('addEstimate')}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="shopping-view-download" onClick={downloadShoppingPlanImage}>
+                  <Download aria-hidden="true" />
+                  {t('saveAsImage')}
+                </button>
+              </section>
             </div>
           )}
         </section>
@@ -3308,11 +3712,31 @@ const CartFilter = () => {
         {activeModule === 'receipts' && showForm && (
           <section className={`receipt-wizard receipt-wizard-step-${receiptStep} grid gap-6 lg:grid-cols-2 mb-8`}>
             <div className="wizard-progress" aria-label={`${t('step')} ${receiptStep}`}>
-              {[t('uploadStep'), t('detailsStep'), t('categoriesStep'), t('saveStep')].map((label, index) => (
-                <span key={label} className={receiptStep >= index + 1 ? 'is-current' : ''}>
-                  <i>{index + 1}</i>{label}
-                </span>
-              ))}
+              {[t('uploadStep'), t('detailsStep'), t('categoriesStep'), t('saveStep')].map((label, index) => {
+                const stepNumber = index + 1;
+                const isPreviousStep = stepNumber < receiptStep;
+                const stepContent = <><i>{stepNumber}</i>{label}</>;
+
+                return isPreviousStep ? (
+                  <button
+                    key={label}
+                    type="button"
+                    className="is-current is-complete"
+                    onClick={() => setReceiptStep(stepNumber)}
+                    aria-label={`${t('goTo')} ${label}`}
+                  >
+                    {stepContent}
+                  </button>
+                ) : (
+                  <span
+                    key={label}
+                    className={receiptStep === stepNumber ? 'is-current' : ''}
+                    aria-current={receiptStep === stepNumber ? 'step' : undefined}
+                  >
+                    {stepContent}
+                  </span>
+                );
+              })}
             </div>
             <div className="receipt-upload-step bg-white rounded-3xl shadow-md p-6 border border-amber-100">
               <h2 className="text-xl font-bold text-stone-900 mb-2">{t('importTitle')}</h2>
@@ -3486,7 +3910,8 @@ const CartFilter = () => {
                     value={formData.date}
                     onChange={(event) => setFormData((current) => ({
                       ...current,
-                      date: event.target.value
+                      date: event.target.value,
+                      dateNeedsConfirmation: event.target.value ? false : current.dateNeedsConfirmation
                     }))}
                     className="w-full border border-stone-300 rounded-2xl px-3 py-2"
                   />
@@ -3748,6 +4173,16 @@ const CartFilter = () => {
               )}
 
               <div className="receipt-save-actions flex gap-2 mt-5">
+                {(
+                  totalSpentSek <= 0
+                  || !formData.date
+                  || formData.dateNeedsConfirmation
+                  || hasUnresolvedReceiptMismatch
+                ) && (
+                  <p className="receipt-save-hint" role="status">
+                    {t('receiptSaveBlocked')}
+                  </p>
+                )}
                 <button
                   onClick={handleAddReceipt}
                   disabled={
@@ -3922,6 +4357,16 @@ const CartFilter = () => {
                           </strong>
                         </div>
                       ))}
+                    </div>
+                    <div className="receipt-history-actions">
+                      <button
+                        type="button"
+                        className="receipt-history-delete"
+                        onClick={() => handleDeleteReceipt(receipt)}
+                      >
+                        <Trash2 aria-hidden="true" />
+                        {t('deleteReceipt')}
+                      </button>
                     </div>
                   </div>
                 </details>
