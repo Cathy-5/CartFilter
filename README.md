@@ -25,14 +25,28 @@ shopping-day goal, and reusable shopping list.
 
 ## Preview
 
-The final preview will contain three screenshots:
-
-1. Home dashboard on a laptop
-2. Receipt analysis with the spending chart
-3. Mobile receipt review or shopping-planning flow
-
-Screenshots are intentionally not included until final, privacy-safe application
-images are available.
+<table>
+<tr>
+<td align="center" width="50%">
+<strong>1. Home Dashboard</strong><br><br>
+<img src="./docs/cartfilter-home-dashboard.png" alt="CartFilter home dashboard" width="420">
+</td>
+<td align="center" width="50%">
+<strong>2. Receipt Insights</strong><br><br>
+<img src="./docs/cartfilter-receipt-insights.png" alt="Receipt spending analysis and category chart" width="420">
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<strong>3. Weekly Budget</strong><br><br>
+<img src="./docs/cartfilter-weekly-budget.png" alt="Weekly grocery budget and spending progress" width="420">
+</td>
+<td align="center" width="50%">
+<strong>4. Shopping List</strong><br><br>
+<img src="./docs/cartfilter-shopping-list.png" alt="Shopping list with estimated prices" width="420">
+</td>
+</tr>
+</table>
 
 ## How It Works
 
