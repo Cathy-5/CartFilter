@@ -103,6 +103,12 @@ const TRANSLATIONS = {
     product: 'Product',
     discount: 'Discount',
     deposit: 'Deposit',
+    'deposit-return': 'Deposit return credit',
+    reconciliation: 'Unmatched receipt amount',
+    receiptMismatch: 'could not be matched to a product. Review the detected lines.',
+    grossPurchases: 'Gross purchases',
+    depositReturnCredit: 'Deposit return credit',
+    amountPaid: 'Amount paid',
     needsReview: 'Needs review',
     shoppingList: 'Shopping list',
     shoppingListHint: 'Start with common groceries or reuse products found in your receipts.',
@@ -116,6 +122,11 @@ const TRANSLATIONS = {
     removeItem: 'Remove',
     clearCompleted: 'Clear completed',
     emptyShoppingList: 'Your shopping list is empty.',
+    estimatedPrice: 'Estimated price',
+    estimatedListTotal: 'Estimated list total',
+    addEstimatedPrices: 'Add estimated prices to compare with your budget.',
+    withinBudget: 'Within budget',
+    overPlannedBudget: 'Over budget by',
     merchantPlaceholder: 'Store or merchant name',
     ocrPlaceholder: 'Paste OCR text here. Example:\nICA Kvantum\n2026-07-25\nMilk 24.90\nBread 31.50\nTomatoes 19.95\nTotal 76.35 SEK',
     categories: {
@@ -128,8 +139,11 @@ const TRANSLATIONS = {
       snacks: 'Snacks',
       frozen: 'Frozen',
       beverages: 'Beverages',
+      alcohol: 'Alcohol',
+      preparedMeals: 'Prepared meals',
       household: 'Household',
       deposit: 'Refundable deposit',
+      depositReturn: 'Deposit return',
       other: 'Other'
     },
     commonItems: {
@@ -223,6 +237,12 @@ const TRANSLATIONS = {
     product: 'Vara',
     discount: 'Rabatt',
     deposit: 'Pant',
+    'deposit-return': 'Pantretur',
+    reconciliation: 'Omatchat kvittobelopp',
+    receiptMismatch: 'kunde inte kopplas till en vara. Granska de hittade raderna.',
+    grossPurchases: 'Varor före pantretur',
+    depositReturnCredit: 'Pantretur',
+    amountPaid: 'Betalat',
     needsReview: 'Behover granskas',
     shoppingList: 'Inkopslista',
     shoppingListHint: 'Borja med vanliga matvaror eller ateranvand varor fran dina kvitton.',
@@ -236,6 +256,11 @@ const TRANSLATIONS = {
     removeItem: 'Ta bort',
     clearCompleted: 'Ta bort avklarade',
     emptyShoppingList: 'Din inkopslista ar tom.',
+    estimatedPrice: 'Beräknat pris',
+    estimatedListTotal: 'Beräknad totalsumma',
+    addEstimatedPrices: 'Lägg till beräknade priser för att jämföra med budgeten.',
+    withinBudget: 'Inom budget',
+    overPlannedBudget: 'Över budget med',
     merchantPlaceholder: 'Butik eller handlare',
     ocrPlaceholder: 'Klistra in OCR-text har. Exempel:\nICA Kvantum\n2026-07-25\nMjolk 24,90\nBrod 31,50\nTomater 19,95\nTotalt 76,35 SEK',
     categories: {
@@ -248,8 +273,11 @@ const TRANSLATIONS = {
       snacks: 'Snacks',
       frozen: 'Fryst',
       beverages: 'Drycker',
+      alcohol: 'Alkohol',
+      preparedMeals: 'Tillagade måltider',
       household: 'Hushall',
       deposit: 'Pant',
+      depositReturn: 'Pantretur',
       other: 'Ovrigt'
     },
     commonItems: {
@@ -273,20 +301,21 @@ const TRANSLATIONS = {
 };
 
 const CATEGORY_RULES = [
-  { key: 'beverages', score: 10, pattern: /\b(cola|pepsi|fanta|sprite|juice|soda|lask|dryck|vatten|water|beer|wine)\b/i },
+  { key: 'alcohol', score: 12, pattern: /\b(beer|wine|cider|ale|lager|ol|öl|vin|brau|bräu)\b/i },
+  { key: 'preparedMeals', score: 11, pattern: /\b(burger|burgare|cheeseburger|cheeseburgare|pizza|lasagne|nuggets|falafel|meal|middag)\b/i },
+  { key: 'beverages', score: 10, pattern: /\b(cola|pepsi|fanta|sprite|juice|soda|lask|dryck|vatten|water)\b/i },
   { key: 'meat', score: 9, pattern: /\b(beef|chicken|pork|meat|sausage|bacon|lamb|tofu|egg|kott|korv|kyckling|flask|agg|notfars)\b/i },
   { key: 'fruits', score: 9, pattern: /\b(fruit|apple|banana|orange|pear|grape|berries|frukt|apple|banan|apelsin|paron|druvor|bar)\b/i },
-  { key: 'vegetables', score: 9, pattern: /\b(tomato|potato|onion|salad|carrot|pepper|broccoli|spinach|parsley|cucumber|gronsak|tomat|potatis|lok|gurka|morot|paprika|spenat|bladpersilja|persilja|sallad)\b/i },
+  { key: 'vegetables', score: 9, pattern: /\b(tomato|potato|onion|salad|carrot|pepper|broccoli|spinach|parsley|cucumber|gronsak|tomat|potatis|lok|gurka|morot|paprika|spenat|bladpersilja|persilja|sallad|isbergssallad)\b/i },
   { key: 'dairy', score: 8, pattern: /\b(milk|cheese|yogurt|butter|cream|quark|mejeri|mjolk|ost|smor|yoghurt|kvarg)\b/i },
   { key: 'grains', score: 8, pattern: /\b(bread|brioche|brosche|broiche|rice|pasta|flour|oat|cereal|brod|ris|havre|mjol)\b/i },
   { key: 'snacks', score: 8, pattern: /\b(chips|candy|chocolate|snack|cookie|cookies|biscuit|biscoff|muffin|muffins|pastel\s+de\s+nata|godis|kex|choklad|muslibar|popcorn)\b/i },
-  { key: 'frozen', score: 7, pattern: /\b(frozen|ice cream|glass|fryst)\b/i },
   { key: 'pantry', score: 5, pattern: /\b(oil|salt|sugar|spice|sauce|beans|coffee|tea|krydda|socker|kaffe)\b/i },
   { key: 'household', score: 8, pattern: /\b(soap|detergent|paper|napkin|clean|disk|tvatt|hushall|toalett)\b/i },
   { key: 'beverages', score: 3, pattern: /\bzero\b/i }
 ];
 
-const DEFAULT_CATEGORY_KEYS = ['meat', 'fruits', 'vegetables', 'dairy', 'grains', 'pantry', 'snacks'];
+const DEFAULT_CATEGORY_KEYS = ['meat', 'fruits', 'vegetables', 'dairy', 'grains', 'pantry', 'snacks', 'beverages', 'alcohol', 'preparedMeals'];
 const REVIEW_CATEGORY_KEYS = [
   'meat',
   'fruits',
@@ -295,10 +324,12 @@ const REVIEW_CATEGORY_KEYS = [
   'grains',
   'pantry',
   'snacks',
-  'frozen',
   'beverages',
+  'alcohol',
+  'preparedMeals',
   'household',
   'deposit',
+  'depositReturn',
   'other'
 ];
 const COMMON_LIST_TEMPLATES = {
@@ -541,6 +572,46 @@ const groupLineItems = (lineItems) => Object.entries(
   amount: roundMoney(amount)
 }));
 
+// Refreshes categories for saved receipts while preserving user corrections and discounts.
+const refreshReceiptCategories = (receipt, categoryMappings = {}) => {
+  if (receipt.rawText) {
+    const reparsed = parseReceiptText(receipt.rawText, receipt.date, categoryMappings);
+    if (reparsed) {
+      return {
+        ...receipt,
+        ...reparsed,
+        id: receipt.id,
+        createdAt: receipt.createdAt
+      };
+    }
+  }
+  if (!receipt.lineItems?.length) return receipt;
+
+  const categoryForProduct = (item) => categoryMappings[item.productKey || normalizeProductKey(item.name)]
+    || pickCategoryKey(item.name);
+  const lineItems = receipt.lineItems.map((item) => {
+    if (item.confidence === 'user' || item.confidence === 'remembered') return item;
+    if (item.type === 'discount' && item.linkedTo) {
+      const linkedProduct = receipt.lineItems.find((candidate) => candidate.name === item.linkedTo);
+      return linkedProduct
+        ? { ...item, categoryKey: categoryForProduct(linkedProduct) }
+        : item;
+    }
+    const categoryKey = categoryForProduct(item);
+    return {
+      ...item,
+      categoryKey,
+      confidence: categoryKey === 'other' ? 'needs-review' : 'rule'
+    };
+  });
+
+  return {
+    ...receipt,
+    lineItems,
+    items: groupLineItems(lineItems)
+  };
+};
+
 // Removes obvious repeated-character OCR noise from merchant names.
 const cleanMerchantName = (name) => name
   .replace(/\b([a-zåäö])\1{2,}\b/gi, '')
@@ -606,9 +677,11 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
   const itemLines = [];
   const totalLine = lines.find((line) => (
     /^(total|totalt|summa|att betala|totalbelopp)\b/i.test(line)
-      && /-?\d+[.,]\d{2}(?:\s*[a-c])?$/i.test(line)
+      && /-?\d+[.,]\d{2}(?:\s*(?:sek|kr|eur|usd|€|\$))?(?:\s*[a-c])?$/i.test(line)
   ));
-  const totalAmountMatch = totalLine?.match(/(-?\d+[.,]\d{2})(?:\s*[a-c])?$/i);
+  const totalAmountMatch = totalLine?.match(
+    /(-?\d+[.,]\d{2})(?:\s*(?:sek|kr|eur|usd|€|\$))?(?:\s*[a-c])?$/i
+  );
   let detectedTotal = totalAmountMatch ? sanitizeNumber(totalAmountMatch[1]) : 0;
   const organizationLineIndex = lines.findIndex((line) => /org\.?\s*nr/i.test(line));
   const itemSectionStart = organizationLineIndex >= 0 ? organizationLineIndex + 1 : 0;
@@ -638,7 +711,9 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
     }
 
     // Lidl appends a VAT code (for example "B") after each product price.
-    const amountMatch = line.match(/(-?\d+[.,]\d{2})(?:\s*(sek|kr|eur|usd|€|\$))?(?:\s+[a-c])?$/i);
+    const amountMatch = line.match(
+      /(-?\d+[.,]\d{2})(?:\s*(sek|kr|eur|usd|€|\$))?(?:\s+[a-z]{1,3}|\s*(?:\[[^\]]*\]|[~=_|5]))*$/i
+    );
     if (!amountMatch) {
       if (!isReceiptMetadata(line)) pendingLabel = line;
       continue;
@@ -650,19 +725,27 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
       continue;
     }
 
+    const weightDetailMatch = line.match(
+      /^(\d+(?:[.,]\d+)?)\s*kg\s*\*\s*(\d+[.,]\d{2})\s*kr\/kg\s*\d+[.,]\d{2}$/i
+    );
     const inlineLabel = line.slice(0, amountMatch.index).trim();
     const isOnlyQuantityAndUnitPrice = /^(?:\d+\s*)?(?:st\s*)?[*x+]\s*\d+[.,]\d{2}$/i.test(inlineLabel);
     const label = (
-      (!inlineLabel || isOnlyQuantityAndUnitPrice)
+      (weightDetailMatch && pendingLabel
+        ? pendingLabel
+        : (!inlineLabel || isOnlyQuantityAndUnitPrice)
         ? `${pendingLabel} ${inlineLabel}`.trim()
-        : inlineLabel
+        : inlineLabel)
     ).replace(/[xX]\d+/g, '').trim();
     pendingLabel = '';
     if (!label || label.length < 2) continue;
 
     const normalizedLabel = normalizeForMatching(label);
-    const isDiscount = amount < 0
-      || /\b(rabatt|discount|prisnedsattning|prisnedsatt|nedsattning|prisavdrag)\b|willys\s*plus\s*:/i.test(normalizedLabel);
+    const isDepositReturn = /\b(pantretur|pant\s*retur|deposit\s*return)\b/i.test(normalizedLabel);
+    const isDiscount = !isDepositReturn && (
+      amount < 0
+      || /\b(rabatt|discount|prisnedsattning|prisnedsatt|nedsattning|prisavdrag)\b|willys\s*plus\s*:/i.test(normalizedLabel)
+    );
     const isDeposit = /(?:^|\s|\+)pant(?:\s|$)/i.test(normalizedLabel);
     const inlineQuantityMatch = inlineLabel.match(
       /(?:^|\s)(\d+(?:[.,]\d+)?)\s*(?:(?:each|st|pcs?)\s*)?[*x+×]\s*(?:sek|kr)?\s*(\d+[.,]\d{2})/i
@@ -686,23 +769,27 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
       ))
       : null;
     const linkedProduct = namedDiscountProduct || lastProduct;
-    const categoryKey = isDeposit
-      ? 'deposit'
+    const categoryKey = isDepositReturn
+      ? 'depositReturn'
+      : (isDeposit
+        ? 'deposit'
       : (isDiscount
         ? linkedProduct?.categoryKey || directCategory
-        : (rememberedCategory || directCategory));
+        : (rememberedCategory || directCategory)));
 
     const parsedLine = {
       name: label,
       amount,
       categoryKey,
-      type: isDeposit ? 'deposit' : (isDiscount ? 'discount' : 'product'),
+      type: isDepositReturn
+        ? 'deposit-return'
+        : (isDeposit ? 'deposit' : (isDiscount ? 'discount' : 'product')),
       linkedTo: (isDiscount || isDeposit) ? linkedProduct?.name || null : null,
       productKey,
-      ...(inlineQuantityMatch && !isDiscount && !isDeposit
+      ...((inlineQuantityMatch || weightDetailMatch) && !isDiscount && !isDeposit
         ? {
-          quantity: sanitizeNumber(inlineQuantityMatch[1]),
-          unitPrice: sanitizeNumber(inlineQuantityMatch[2])
+          quantity: sanitizeNumber((inlineQuantityMatch || weightDetailMatch)[1]),
+          unitPrice: sanitizeNumber((inlineQuantityMatch || weightDetailMatch)[2])
         }
         : {}),
       confidence: rememberedCategory
@@ -715,9 +802,29 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
 
   if (itemLines.length === 0 && !detectedTotal) return null;
 
+  const parsedItemsTotal = roundMoney(
+    itemLines.reduce((sum, item) => sum + item.amount, 0)
+  );
+  const unmatchedAmount = detectedTotal
+    ? roundMoney(detectedTotal - parsedItemsTotal)
+    : 0;
+  if (Math.abs(unmatchedAmount) >= 0.01) {
+    itemLines.push({
+      name: 'Unmatched receipt amount',
+      amount: unmatchedAmount,
+      categoryKey: 'other',
+      type: 'reconciliation',
+      linkedTo: null,
+      productKey: 'unmatched receipt amount',
+      confidence: 'needs-review'
+    });
+  }
+
   const items = groupLineItems(itemLines);
 
-  const total = detectedTotal || itemLines.reduce((sum, item) => sum + item.amount, 0);
+  const total = roundMoney(
+    detectedTotal || itemLines.reduce((sum, item) => sum + item.amount, 0)
+  );
 
   return {
     merchant,
@@ -728,7 +835,8 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
     total,
     source: 'ocr',
     rawText: text,
-    dateDetected: Boolean(dateMatch)
+    dateDetected: Boolean(dateMatch),
+    unmatchedAmount
   };
 };
 
@@ -770,8 +878,11 @@ const CartFilter = () => {
     imageUrl: '',
     storagePath: '',
     lineItems: [],
+    rawText: '',
     items: createEmptyItems(),
-    dateNeedsConfirmation: false
+    dateNeedsConfirmation: false,
+    receiptTotal: 0,
+    unmatchedAmount: 0
   });
 
   useEffect(() => () => {
@@ -935,6 +1046,14 @@ const CartFilter = () => {
     );
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    setReceipts((current) => {
+      const refreshed = current.map((receipt) => refreshReceiptCategories(receipt, categoryMappings));
+      return JSON.stringify(refreshed) === JSON.stringify(current) ? current : refreshed;
+    });
+  }, [categoryMappings, user]);
+
   const translatedCategoryLabel = useCallback((key) => t(`categories.${key}`) || key, [t]);
 
   const normalizedItems = useMemo(
@@ -946,10 +1065,20 @@ const CartFilter = () => {
     [formData.items]
   );
 
-  const totalSpentSek = normalizedItems.reduce(
+  const calculatedItemsTotalSek = normalizedItems.reduce(
     (sum, item) => sum + normalizeToSek(item.amount, formData.currency),
     0
   );
+  const totalSpentSek = formData.receiptTotal > 0
+    ? normalizeToSek(formData.receiptTotal, formData.currency)
+    : calculatedItemsTotalSek;
+  const depositReturnSek = normalizedItems
+    .filter((item) => item.key === 'depositReturn')
+    .reduce(
+      (sum, item) => sum + normalizeToSek(item.amount, formData.currency),
+      0
+    );
+  const grossPurchasesSek = totalSpentSek - depositReturnSek;
 
   const receiptsWithDisplay = useMemo(
     () =>
@@ -965,6 +1094,7 @@ const CartFilter = () => {
 
     receipts.forEach((receipt) => {
       receipt.items.forEach((item) => {
+        if (item.key === 'depositReturn') return;
         const amountSek = normalizeToSek(item.amount, receipt.currency);
         totals[item.key] = (totals[item.key] || 0) + amountSek;
       });
@@ -976,8 +1106,10 @@ const CartFilter = () => {
         name: translatedCategoryLabel(key),
         value
       }))
+      .filter((item) => item.value > 0)
       .sort((a, b) => b.value - a.value);
   }, [receipts, translatedCategoryLabel]);
+  const categoryTotalSek = categoryData.reduce((sum, category) => sum + category.value, 0);
 
   const learnedShoppingSuggestions = useMemo(() => {
     const learnedProducts = new Map();
@@ -996,7 +1128,11 @@ const CartFilter = () => {
           learnedProducts.set(normalizedName, {
             name: current?.name || item.name,
             count: (current?.count || 0) + 1,
-            categoryKey: current?.categoryKey || item.categoryKey
+            categoryKey: current?.categoryKey || item.categoryKey,
+            estimatedPriceSek: current?.estimatedPriceSek || normalizeToSek(
+              item.unitPrice || item.amount,
+              receipt.currency
+            )
           });
         });
     });
@@ -1039,6 +1175,15 @@ const CartFilter = () => {
   const weeklyBudgetProgress = weeklyBudgetValue > 0
     ? Math.min((weeklySpentSek / weeklyBudgetValue) * 100, 100)
     : 0;
+  const shoppingListEstimatedTotalSek = shoppingList.reduce(
+    (sum, item) => sum + (Number(item.estimatedPriceSek) || 0),
+    0
+  );
+  const hasShoppingListEstimates = shoppingList.some(
+    (item) => Number(item.estimatedPriceSek) > 0
+  );
+  const shoppingListBudgetDifferenceSek = weeklyRemainingSek - shoppingListEstimatedTotalSek;
+  const shoppingListIsWithinBudget = shoppingListEstimatedTotalSek <= weeklyRemainingSek;
 
   // Updates one editable category row in the receipt form.
   const handleItemChange = (index, field, value) => {
@@ -1094,7 +1239,7 @@ const CartFilter = () => {
   };
 
   // Adds unique products to the current shopping list.
-  const addShoppingItems = (names, categoryKey = null) => {
+  const addShoppingItems = (names, categoryKey = null, estimatedPriceSek = 0) => {
     setShoppingList((current) => {
       const existingNames = new Set(current.map((item) => normalizeShoppingIdentity(item.name)));
       const additions = names
@@ -1103,7 +1248,8 @@ const CartFilter = () => {
           id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
           name: name.trim(),
           categoryKey,
-          completed: false
+          completed: false,
+          estimatedPriceSek
         }));
       return [...current, ...additions];
     });
@@ -1138,6 +1284,17 @@ const CartFilter = () => {
     setShoppingList((current) => current.filter((item) => item.id !== itemId));
   };
 
+  // Updates an item's estimated price while keeping stored values in SEK.
+  const updateShoppingItemPrice = (itemId, displayPrice) => {
+    const estimatedPriceSek = normalizeToSek(
+      sanitizeNumber(displayPrice),
+      displayCurrency
+    );
+    setShoppingList((current) => current.map((item) => (
+      item.id === itemId ? { ...item, estimatedPriceSek } : item
+    )));
+  };
+
   // Restores the receipt form and OCR state to their defaults.
   const resetForm = () => {
     setFormData({
@@ -1149,7 +1306,9 @@ const CartFilter = () => {
       storagePath: '',
       lineItems: [],
       items: createEmptyItems(),
-      dateNeedsConfirmation: false
+      dateNeedsConfirmation: false,
+      receiptTotal: 0,
+      unmatchedAmount: 0
     });
     setReceiptImage(null);
     setReceiptImagePreview('');
@@ -1172,7 +1331,7 @@ const CartFilter = () => {
       || !formData.date
     ) return;
 
-    const cleanedItems = normalizedItems.filter((item) => item.amount > 0);
+    const cleanedItems = normalizedItems.filter((item) => item.amount !== 0);
     const receiptToSave = {
       merchant: formData.merchant || 'Unknown Merchant',
       date: formData.date,
@@ -1180,9 +1339,11 @@ const CartFilter = () => {
       source: formData.source,
       items: cleanedItems,
       lineItems: formData.lineItems,
+      rawText: formData.rawText || null,
       totalSek: roundMoney(totalSpentSek),
       imageUrl: formData.imageUrl || null,
-      storagePath: formData.storagePath || null
+      storagePath: formData.storagePath || null,
+      unmatchedAmount: formData.unmatchedAmount || 0
     };
     const receiptId = createReceiptFingerprint(receiptToSave);
     const isDuplicate = receipts.some(
@@ -1232,8 +1393,11 @@ const CartFilter = () => {
       imageUrl: formData.imageUrl,
       storagePath: formData.storagePath,
       lineItems: parsed.lineItems,
+      rawText: text,
       items: parsed.items,
-      dateNeedsConfirmation: !parsed.dateDetected
+      dateNeedsConfirmation: !parsed.dateDetected,
+      receiptTotal: parsed.total,
+      unmatchedAmount: parsed.unmatchedAmount
     });
     setParseStatus('success');
     setParseMessage(t('parseSuccess'));
@@ -1328,8 +1492,11 @@ const CartFilter = () => {
           imageUrl,
           storagePath,
           lineItems: parsed.lineItems,
+          rawText: extractedText,
           items: parsed.items,
-          dateNeedsConfirmation: !parsed.dateDetected
+          dateNeedsConfirmation: !parsed.dateDetected,
+          receiptTotal: parsed.total,
+          unmatchedAmount: parsed.unmatchedAmount
         });
         setParseStatus('success');
         setParseMessage(t('parseSuccess'));
@@ -1642,7 +1809,11 @@ const CartFilter = () => {
                   <button
                     key={item.name}
                     type="button"
-                    onClick={() => addShoppingItems([item.name], item.categoryKey)}
+                    onClick={() => addShoppingItems(
+                      [item.name],
+                      item.categoryKey,
+                      item.estimatedPriceSek
+                    )}
                     className="rounded-full border border-stone-300 bg-stone-50 px-3 py-2 text-sm text-stone-700"
                   >
                     + {item.name} {item.count > 1 ? `×${item.count}` : ''}
@@ -1677,6 +1848,34 @@ const CartFilter = () => {
                       </span>
                     )}
                   </div>
+                  <label className="text-xs text-stone-500">
+                    <span className="sr-only">
+                      {t('estimatedPrice')}: {item.name}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={
+                          item.estimatedPriceSek
+                            ? roundMoney(convertFromSek(
+                              item.estimatedPriceSek,
+                              displayCurrency
+                            ))
+                            : ''
+                        }
+                        onChange={(event) => updateShoppingItemPrice(
+                          item.id,
+                          event.target.value
+                        )}
+                        aria-label={`${t('estimatedPrice')}: ${item.name}`}
+                        placeholder="0.00"
+                        className="w-20 rounded-xl border border-stone-300 bg-white px-2 py-1 text-right text-sm text-stone-800"
+                      />
+                      <span>{displayCurrency}</span>
+                    </div>
+                  </label>
                   <button
                     type="button"
                     onClick={() => removeShoppingItem(item.id)}
@@ -1690,6 +1889,42 @@ const CartFilter = () => {
             </div>
           ) : (
             <p className="mt-5 text-sm text-stone-500">{t('emptyShoppingList')}</p>
+          )}
+
+          {shoppingList.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm text-stone-600">{t('estimatedListTotal')}</span>
+                <strong className="text-lg text-stone-900">
+                  {formatMoney(
+                    shoppingListEstimatedTotalSek,
+                    displayCurrency,
+                    locale
+                  )}
+                </strong>
+              </div>
+
+              {!hasShoppingListEstimates && (
+                <p className="mt-2 text-sm text-stone-600">{t('addEstimatedPrices')}</p>
+              )}
+
+              {hasShoppingListEstimates && shoppingListIsWithinBudget && (
+                <p className="mt-2 text-sm font-semibold text-emerald-700">
+                  {t('withinBudget')}
+                </p>
+              )}
+
+              {hasShoppingListEstimates && !shoppingListIsWithinBudget && (
+                <p className="mt-2 text-sm font-semibold text-red-600">
+                  {t('overPlannedBudget')}{' '}
+                  {formatMoney(
+                    Math.abs(shoppingListBudgetDifferenceSek),
+                    displayCurrency,
+                    locale
+                  )}
+                </p>
+              )}
+            </div>
           )}
         </section>
 
@@ -1915,13 +2150,45 @@ const CartFilter = () => {
               </div>
 
               <div className="mt-5 rounded-2xl bg-amber-50 border border-amber-200 p-4">
-                <p className="text-sm text-stone-600">
-                  {t('total')}: <span className="font-bold text-lg text-amber-700">{formatMoney(totalSpentSek, formData.currency, locale)}</span>
+                {depositReturnSek < 0 && (
+                  <>
+                    <p className="flex justify-between gap-4 text-sm text-stone-600">
+                      <span>{t('grossPurchases')}</span>
+                      <span>{formatMoney(grossPurchasesSek, formData.currency, locale)}</span>
+                    </p>
+                    <p className="mt-1 flex justify-between gap-4 text-sm text-emerald-700">
+                      <span>{t('depositReturnCredit')}</span>
+                      <span>{formatMoney(depositReturnSek, formData.currency, locale)}</span>
+                    </p>
+                  </>
+                )}
+                <p className="mt-1 flex justify-between gap-4 text-sm text-stone-600">
+                  <span>{depositReturnSek < 0 ? t('amountPaid') : t('total')}</span>
+                  <span className="font-bold text-lg text-amber-700">
+                    {formatMoney(totalSpentSek, formData.currency, locale)}
+                  </span>
                 </p>
                 <p className="text-xs text-stone-500 mt-1">
                   {t('currency')}: {displayCurrency} view, {formData.currency} receipt
                 </p>
               </div>
+
+              {Math.abs(formData.unmatchedAmount || 0) >= 0.01 && (
+                <p
+                  role="alert"
+                  className="mt-4 rounded-2xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm text-orange-900"
+                >
+                  {formatMoney(
+                    normalizeToSek(
+                      Math.abs(formData.unmatchedAmount),
+                      formData.currency
+                    ),
+                    formData.currency,
+                    locale
+                  )}{' '}
+                  {t('receiptMismatch')}
+                </p>
+              )}
 
               {receiptNotice && (
                 <p
@@ -1976,8 +2243,8 @@ const CartFilter = () => {
               <h2 className="text-lg font-bold text-stone-900 mb-4">{t('spendingByCategory')}</h2>
               <div className="space-y-3">
                 {categoryData.map((category) => {
-                  const percentage = totalAcrossReceiptsSek > 0
-                    ? ((category.value / totalAcrossReceiptsSek) * 100).toFixed(1)
+                  const percentage = categoryTotalSek > 0
+                    ? ((category.value / categoryTotalSek) * 100).toFixed(1)
                     : '0.0';
 
                   return (

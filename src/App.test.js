@@ -276,7 +276,8 @@ Mottaget Kontokort 276,79
   expect(categoryAmounts).toEqual({
     beverages: 20,
     deposit: 6,
-    meat: 128.3,
+    meat: 87.7,
+    preparedMeals: 40.6,
     fruits: 39.9,
     vegetables: 65.69,
     snacks: 16.9
@@ -325,10 +326,135 @@ Totalt 186,89 SEK
     beverages: 26.3,
     deposit: 4,
     snacks: 28,
-    meat: 89.9
+    meat: 89.9,
+    other: 38.69
   });
   expect(parsed.lineItems[0].name).toContain('COLA SOCKERFRI 2L');
   expect(parsed.lineItems[0].categoryKey).toBe('beverages');
+});
+
+test('reconciles the complete Willys receipt with alcohol and a pant return', () => {
+  const receiptText = `Willys Växjö Teleborg
+Tel.0470-705180
+Org. nr: 556163-2232
+COLA SOCKERFRI 2L 13,15
++PANT ENG PET >1L 2,00
+EMD BRÄU 2.8% 50CL6P 26,90
++PANT ALUMINIUMBURK 6,00
+TUC SALTY CRA 19,50
+BISCOFF CRUNCHY 90G 19,50
+Rabatt:CHOKLAD -9,00
+JORDGUBBAR 1KG 29,90
+MANGO 500G 20,72
+FÄRSKPOTATIS TVÄTTAD 10,37
+BLANDFÄRS 18% 44,90
+.FÄRS
+LÖK GUL 1,64
+MOROT 1KG 16,90
+SOJAMARINERAD TOFU 2st*13,90 27,80
+BISCOFF 250G 16,90
+SENSATION WHITE 20,90
+POPCORN 65G 10,50
+FALAFEL 800G 47,22
+RUSSIN KÄRNFRIA 250G 18,83
+ISBERGSSALLAD
+0,635kg*19,90kr/kg 12,63
+SPENAT 23,90
+Rabatt:SALLAD -9,00
+CHEESEBURGARE 2P 34,90
+Prisnedsättning 50,0% -17,45
+ROYAL ROLLS VANILJ 9,36
+CHAMPINJONER 250G 16,90
+Rabatt:CHAMPINJONER -7,00
+CITRON 500G KL 2 16,90
+PANTRETUR -68,00
+Totalt 24 varor
+Totalt 357,77 SEK
+2026-07-12 19:52:31`;
+
+  const parsed = parseReceiptText(receiptText, '2026-07-31');
+  const depositReturn = parsed.lineItems.find((item) => item.type === 'deposit-return');
+  const grossPurchases = parsed.lineItems
+    .filter((item) => item.type !== 'deposit-return')
+    .reduce((sum, item) => sum + item.amount, 0);
+
+  expect(parsed.total).toBe(357.77);
+  expect(parsed.unmatchedAmount).toBe(0);
+  expect(Number(grossPurchases.toFixed(2))).toBe(425.77);
+  expect(parsed.items.find((item) => item.key === 'alcohol').amount).toBe(26.9);
+  expect(parsed.lineItems.find((item) => item.name === 'ISBERGSSALLAD')).toEqual(
+    expect.objectContaining({
+      amount: 12.63,
+      quantity: 0.635,
+      unitPrice: 19.9,
+      categoryKey: 'vegetables'
+    })
+  );
+  expect(parsed.lineItems.find((item) => item.name === 'CHEESEBURGARE 2P')).toEqual(
+    expect.objectContaining({ amount: 34.9, categoryKey: 'preparedMeals' })
+  );
+  expect(parsed.lineItems.find((item) => item.type === 'discount' && item.linkedTo === 'CHEESEBURGARE 2P')).toEqual(
+    expect.objectContaining({ amount: -17.45, categoryKey: 'preparedMeals' })
+  );
+  expect(depositReturn).toEqual(expect.objectContaining({
+    name: 'PANTRETUR',
+    amount: -68,
+    categoryKey: 'depositReturn',
+    linkedTo: null
+  }));
+  expect(parsed.items.find((item) => item.key === 'depositReturn').amount).toBe(-68);
+});
+
+test('ignores trailing OCR noise without losing products or discount links', () => {
+  const parsed = parseReceiptText(
+    `Willys
+Org. nr: 556163-2232
+SPENAT 23,90
+Rabatt:SALLAD -9,00 jy
+CHEESEBURGARE 2P 34,90 5
+Prisnedsättning 50,0% -17,45 ~
+ROYAL ROLLS VANILJ 9,36 [5]
+Totalt 3 varor
+Totalt 41,71 SEK`,
+    '2026-07-31'
+  );
+
+  expect(parsed.lineItems.map((item) => item.name)).toEqual([
+    'SPENAT',
+    'Rabatt:SALLAD',
+    'CHEESEBURGARE 2P',
+    'Prisnedsättning 50,0%',
+    'ROYAL ROLLS VANILJ'
+  ]);
+  expect(parsed.lineItems[1]).toEqual(expect.objectContaining({
+    amount: -9,
+    linkedTo: 'SPENAT'
+  }));
+  expect(parsed.lineItems[3]).toEqual(expect.objectContaining({
+    amount: -17.45,
+    linkedTo: 'CHEESEBURGARE 2P'
+  }));
+});
+
+test('adds an explicit reconciliation line when OCR misses part of the paid total', () => {
+  const parsed = parseReceiptText(
+    `Willys
+Org. nr: 556163-2232
+MJÖLK 20,00
+Totalt 2 varor
+Totalt 35,00 SEK`,
+    '2026-07-31'
+  );
+  const reconciliation = parsed.lineItems.find((item) => item.type === 'reconciliation');
+
+  expect(parsed.total).toBe(35);
+  expect(parsed.unmatchedAmount).toBe(15);
+  expect(reconciliation).toEqual(expect.objectContaining({
+    amount: 15,
+    categoryKey: 'other',
+    confidence: 'needs-review'
+  }));
+  expect(parsed.items.reduce((sum, item) => sum + item.amount, 0)).toBe(35);
 });
 
 test('parses Lidl VAT markers and stops before the payment section', () => {
@@ -528,5 +654,73 @@ test('builds a simple shopping list from common-item templates', async () => {
       }),
       { merge: true }
     );
+  });
+});
+
+test('prefills a learned shopping item with its receipt unit price', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('receipts')) {
+      callback({
+        docs: [{
+          id: 'receipt-1',
+          data: () => ({
+            merchant: 'ICA',
+            date: '2026-07-21',
+            currency: 'SEK',
+            items: [{ key: 'dairy', amount: 50 }],
+            lineItems: [{
+              name: 'Milk',
+              type: 'product',
+              categoryKey: 'dairy',
+              quantity: 2,
+              unitPrice: 25,
+              amount: 50
+            }],
+            totalSek: 50
+          })
+        }]
+      });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+  fireEvent.click(await screen.findByRole('button', { name: /\+ milk/i }));
+
+  expect(screen.getByLabelText(/estimated price: milk/i)).toHaveValue(25);
+  expect(screen.getByText(/^within budget$/i)).toBeInTheDocument();
+});
+
+test('compares editable shopping estimates with the remaining weekly budget', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((receiptQuery, callback) => {
+    callback({ docs: [] });
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /add weekly basics/i }));
+  const milkPriceInput = screen.getByLabelText(/estimated price: milk/i);
+
+  fireEvent.change(milkPriceInput, { target: { value: '100' } });
+  expect(screen.getByText(/^within budget$/i)).toBeInTheDocument();
+
+  fireEvent.change(milkPriceInput, { target: { value: '900' } });
+  expect(screen.getByText(/over budget by/i)).toHaveTextContent('SEK 100.00');
+
+  await waitFor(() => {
+    const storedList = JSON.parse(
+      window.localStorage.getItem('cartfilter-shopping-list-user-1')
+    );
+    expect(storedList.find((item) => item.name === 'Milk').estimatedPriceSek).toBe(900);
   });
 });
