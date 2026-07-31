@@ -78,6 +78,15 @@ const TRANSLATIONS = {
     spentThisWeek: 'Spent this week',
     remainingThisWeek: 'Remaining',
     overBudget: 'You are over your weekly budget.',
+    shoppingFrequency: 'Shopping frequency',
+    shoppingDays: 'Shopping days',
+    maximumShoppingDays: 'Maximum shopping days per week',
+    storesVisited: 'Stores visited',
+    shoppingDayLeft: 'You have one shopping day left.',
+    shoppingDayLimitReached: 'You have reached your planned shopping days.',
+    shoppingDayLimitExceeded: 'You shopped on an extra day this week.',
+    receiptDateNotDetected: 'Receipt date was not detected. Please confirm it.',
+    confirmDate: 'Confirm date',
     receipts: 'Receipts',
     items: 'items',
     spendingByCategory: 'Spending by category',
@@ -189,6 +198,15 @@ const TRANSLATIONS = {
     spentThisWeek: 'Spenderat denna vecka',
     remainingThisWeek: 'Kvar',
     overBudget: 'Du har overskridit din veckobudget.',
+    shoppingFrequency: 'Inköpsfrekvens',
+    shoppingDays: 'Inköpsdagar',
+    maximumShoppingDays: 'Maximalt antal inköpsdagar per vecka',
+    storesVisited: 'Besökta butiker',
+    shoppingDayLeft: 'Du har en inköpsdag kvar.',
+    shoppingDayLimitReached: 'Du har nått dina planerade inköpsdagar.',
+    shoppingDayLimitExceeded: 'Du handlade en extra dag den här veckan.',
+    receiptDateNotDetected: 'Kvittodatum kunde inte hittas. Bekräfta datumet.',
+    confirmDate: 'Bekräfta datum',
     receipts: 'Kvitton',
     items: 'varor',
     spendingByCategory: 'Utgifter per kategori',
@@ -259,7 +277,7 @@ const CATEGORY_RULES = [
   { key: 'meat', score: 9, pattern: /\b(beef|chicken|pork|meat|sausage|bacon|lamb|tofu|egg|kott|korv|kyckling|flask|agg|notfars)\b/i },
   { key: 'fruits', score: 9, pattern: /\b(fruit|apple|banana|orange|pear|grape|berries|frukt|apple|banan|apelsin|paron|druvor|bar)\b/i },
   { key: 'vegetables', score: 9, pattern: /\b(tomato|potato|onion|salad|carrot|pepper|broccoli|spinach|parsley|cucumber|gronsak|tomat|potatis|lok|gurka|morot|paprika|spenat|bladpersilja|persilja|sallad)\b/i },
-  { key: 'dairy', score: 8, pattern: /\b(milk|cheese|yogurt|butter|cream|mejeri|mjolk|ost|smor|yoghurt)\b/i },
+  { key: 'dairy', score: 8, pattern: /\b(milk|cheese|yogurt|butter|cream|quark|mejeri|mjolk|ost|smor|yoghurt|kvarg)\b/i },
   { key: 'grains', score: 8, pattern: /\b(bread|brioche|brosche|broiche|rice|pasta|flour|oat|cereal|brod|ris|havre|mjol)\b/i },
   { key: 'snacks', score: 8, pattern: /\b(chips|candy|chocolate|snack|cookie|cookies|biscuit|biscoff|muffin|muffins|pastel\s+de\s+nata|godis|kex|choklad|muslibar|popcorn)\b/i },
   { key: 'frozen', score: 7, pattern: /\b(frozen|ice cream|glass|fryst)\b/i },
@@ -610,6 +628,15 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
   let lastProduct = null;
 
   for (const line of possibleItemLines) {
+    const quantityDetailMatch = line.match(
+      /^(\d+(?:[.,]\d+)?)\s*(?:(?:each|st|pcs?)\s*)?[*x×]\s*(?:sek|kr)?\s*(\d+[.,]\d{2})(?:\s*(?:sek|kr))?(?:\s*\/\s*(?:each|st|pcs?))?$/i
+    );
+    if (quantityDetailMatch && lastProduct) {
+      lastProduct.quantity = sanitizeNumber(quantityDetailMatch[1]);
+      lastProduct.unitPrice = sanitizeNumber(quantityDetailMatch[2]);
+      continue;
+    }
+
     // Lidl appends a VAT code (for example "B") after each product price.
     const amountMatch = line.match(/(-?\d+[.,]\d{2})(?:\s*(sek|kr|eur|usd|€|\$))?(?:\s+[a-c])?$/i);
     if (!amountMatch) {
@@ -634,8 +661,12 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
     if (!label || label.length < 2) continue;
 
     const normalizedLabel = normalizeForMatching(label);
-    const isDiscount = /\b(rabatt|discount|prisnedsattning|prisnedsatt|nedsattning|prisavdrag)\b|willys\s*plus\s*:/i.test(normalizedLabel);
+    const isDiscount = amount < 0
+      || /\b(rabatt|discount|prisnedsattning|prisnedsatt|nedsattning|prisavdrag)\b|willys\s*plus\s*:/i.test(normalizedLabel);
     const isDeposit = /(?:^|\s|\+)pant(?:\s|$)/i.test(normalizedLabel);
+    const inlineQuantityMatch = inlineLabel.match(
+      /(?:^|\s)(\d+(?:[.,]\d+)?)\s*(?:(?:each|st|pcs?)\s*)?[*x+×]\s*(?:sek|kr)?\s*(\d+[.,]\d{2})/i
+    );
     const directCategory = pickCategoryKey(label);
     const productKey = normalizeProductKey(label);
     const rememberedCategory = categoryMappings[productKey];
@@ -668,6 +699,12 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
       type: isDeposit ? 'deposit' : (isDiscount ? 'discount' : 'product'),
       linkedTo: (isDiscount || isDeposit) ? linkedProduct?.name || null : null,
       productKey,
+      ...(inlineQuantityMatch && !isDiscount && !isDeposit
+        ? {
+          quantity: sanitizeNumber(inlineQuantityMatch[1]),
+          unitPrice: sanitizeNumber(inlineQuantityMatch[2])
+        }
+        : {}),
       confidence: rememberedCategory
         ? 'remembered'
         : (categoryKey === 'other' ? 'needs-review' : 'rule')
@@ -690,7 +727,8 @@ const parseReceiptText = (text, fallbackDate, categoryMappings = {}) => {
     lineItems: itemLines,
     total,
     source: 'ocr',
-    rawText: text
+    rawText: text,
+    dateDetected: Boolean(dateMatch)
   };
 };
 
@@ -721,6 +759,8 @@ const CartFilter = () => {
   const [categoryMappings, setCategoryMappings] = useState({});
   const [weeklyBudgetSek, setWeeklyBudgetSek] = useState(800);
   const [weeklyBudgetOwner, setWeeklyBudgetOwner] = useState('');
+  const [weeklyShoppingDayLimit, setWeeklyShoppingDayLimit] = useState(3);
+  const [weeklyShoppingDayOwner, setWeeklyShoppingDayOwner] = useState('');
 
   const [formData, setFormData] = useState({
     merchant: '',
@@ -730,7 +770,8 @@ const CartFilter = () => {
     imageUrl: '',
     storagePath: '',
     lineItems: [],
-    items: createEmptyItems()
+    items: createEmptyItems(),
+    dateNeedsConfirmation: false
   });
 
   useEffect(() => () => {
@@ -811,6 +852,32 @@ const CartFilter = () => {
       String(weeklyBudgetSek)
     );
   }, [user, weeklyBudgetOwner, weeklyBudgetSek]);
+
+  useEffect(() => {
+    if (!user) {
+      setWeeklyShoppingDayLimit(3);
+      setWeeklyShoppingDayOwner('');
+      return;
+    }
+
+    const storageKey = `cartfilter-weekly-shopping-days-${user.uid}`;
+    const oldStorageKey = `cartfilter-weekly-visits-${user.uid}`;
+    const storedValue = window.localStorage.getItem(storageKey)
+      ?? window.localStorage.getItem(oldStorageKey);
+    const storedLimit = storedValue === null ? Number.NaN : Number(storedValue);
+    setWeeklyShoppingDayLimit(
+      Number.isFinite(storedLimit) && storedLimit > 0 ? storedLimit : 3
+    );
+    setWeeklyShoppingDayOwner(user.uid);
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || weeklyShoppingDayOwner !== user.uid) return;
+    window.localStorage.setItem(
+      `cartfilter-weekly-shopping-days-${user.uid}`,
+      String(weeklyShoppingDayLimit)
+    );
+  }, [user, weeklyShoppingDayLimit, weeklyShoppingDayOwner]);
 
   const t = useMemo(() => buildTranslator(language), [language]);
   const locale = language === 'sv' ? 'sv-SE' : 'en-US';
@@ -947,14 +1014,26 @@ const CartFilter = () => {
   const startOfThisWeek = getStartOfWeek();
   const startOfNextWeek = new Date(startOfThisWeek);
   startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
-  const weeklySpentSek = receipts
-    .filter((receipt) => {
-      const receiptDate = new Date(`${receipt.date}T00:00:00`);
-      return !Number.isNaN(receiptDate.getTime())
-        && receiptDate >= startOfThisWeek
-        && receiptDate < startOfNextWeek;
-    })
+  const receiptsThisWeek = receipts.filter((receipt) => {
+    const receiptDate = new Date(`${receipt.date}T00:00:00`);
+    return !Number.isNaN(receiptDate.getTime())
+      && receiptDate >= startOfThisWeek
+      && receiptDate < startOfNextWeek;
+  });
+  const weeklySpentSek = receiptsThisWeek
     .reduce((sum, receipt) => sum + (Number(receipt.totalSek) || 0), 0);
+  const weeklyShoppingDayCount = new Set(
+    receiptsThisWeek.map((receipt) => receipt.date).filter(Boolean)
+  ).size;
+  const weeklyStoreStops = new Set(
+    receiptsThisWeek
+      .filter((receipt) => {
+        const merchant = normalizeProductKey(receipt.merchant);
+        return merchant && merchant !== 'unknown merchant';
+      })
+      .map((receipt) => `${receipt.date}:${normalizeProductKey(receipt.merchant)}`)
+  ).size;
+  const weeklyShoppingDaysRemaining = weeklyShoppingDayLimit - weeklyShoppingDayCount;
   const weeklyBudgetValue = Number(weeklyBudgetSek) || 0;
   const weeklyRemainingSek = weeklyBudgetValue - weeklySpentSek;
   const weeklyBudgetProgress = weeklyBudgetValue > 0
@@ -1069,7 +1148,8 @@ const CartFilter = () => {
       imageUrl: '',
       storagePath: '',
       lineItems: [],
-      items: createEmptyItems()
+      items: createEmptyItems(),
+      dateNeedsConfirmation: false
     });
     setReceiptImage(null);
     setReceiptImagePreview('');
@@ -1084,7 +1164,13 @@ const CartFilter = () => {
 
   // Validates and saves a non-duplicate receipt to Firestore.
   const handleAddReceipt = async () => {
-    if (totalSpentSek <= 0 || !user || receiptSaving) return;
+    if (
+      totalSpentSek <= 0
+      || !user
+      || receiptSaving
+      || formData.dateNeedsConfirmation
+      || !formData.date
+    ) return;
 
     const cleanedItems = normalizedItems.filter((item) => item.amount > 0);
     const receiptToSave = {
@@ -1146,7 +1232,8 @@ const CartFilter = () => {
       imageUrl: formData.imageUrl,
       storagePath: formData.storagePath,
       lineItems: parsed.lineItems,
-      items: parsed.items
+      items: parsed.items,
+      dateNeedsConfirmation: !parsed.dateDetected
     });
     setParseStatus('success');
     setParseMessage(t('parseSuccess'));
@@ -1241,7 +1328,8 @@ const CartFilter = () => {
           imageUrl,
           storagePath,
           lineItems: parsed.lineItems,
-          items: parsed.items
+          items: parsed.items,
+          dateNeedsConfirmation: !parsed.dateDetected
         });
         setParseStatus('success');
         setParseMessage(t('parseSuccess'));
@@ -1384,6 +1472,53 @@ const CartFilter = () => {
               {showForm ? t('hideForm') : t('importReceipt')}
             </button>
           </div>
+        </section>
+
+        <section className="mb-6 rounded-3xl border border-amber-100 bg-white p-6 shadow-md">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-stone-900">{t('shoppingFrequency')}</h2>
+              <p className="mt-1 text-sm text-stone-600">
+                {t('shoppingDays')}: {weeklyShoppingDayCount} / {weeklyShoppingDayLimit}
+              </p>
+              <p className="mt-1 text-sm text-stone-500">
+                {t('storesVisited')}: {weeklyStoreStops}
+              </p>
+            </div>
+
+            <label className="text-sm font-medium text-stone-700">
+              {t('maximumShoppingDays')}
+              <select
+                value={weeklyShoppingDayLimit}
+                onChange={(event) => setWeeklyShoppingDayLimit(Number(event.target.value))}
+                className="ml-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2"
+              >
+                {[1, 2, 3, 4, 5, 6, 7].map((limit) => (
+                  <option key={limit} value={limit}>
+                    {limit}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {weeklyShoppingDaysRemaining === 1 && (
+            <p className="mt-4 text-sm font-medium text-emerald-700">
+              {t('shoppingDayLeft')}
+            </p>
+          )}
+
+          {weeklyShoppingDaysRemaining === 0 && (
+            <p className="mt-4 text-sm font-medium text-amber-700">
+              {t('shoppingDayLimitReached')}
+            </p>
+          )}
+
+          {weeklyShoppingDaysRemaining < 0 && (
+            <p className="mt-4 text-sm font-medium text-red-600">
+              {t('shoppingDayLimitExceeded')}
+            </p>
+          )}
         </section>
 
         <section className="mb-6 rounded-3xl border border-amber-100 bg-white p-6 shadow-md">
@@ -1658,9 +1793,27 @@ const CartFilter = () => {
                   <input
                     type="date"
                     value={formData.date}
-                    onChange={(event) => setFormData((current) => ({ ...current, date: event.target.value }))}
+                    onChange={(event) => setFormData((current) => ({
+                      ...current,
+                      date: event.target.value
+                    }))}
                     className="w-full border border-stone-300 rounded-2xl px-3 py-2"
                   />
+                  {formData.dateNeedsConfirmation && (
+                    <div className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                      <p className="text-xs text-amber-900">{t('receiptDateNotDetected')}</p>
+                      <button
+                        type="button"
+                        onClick={() => setFormData((current) => ({
+                          ...current,
+                          dateNeedsConfirmation: false
+                        }))}
+                        className="mt-2 text-xs font-semibold text-amber-800 underline"
+                      >
+                        {t('confirmDate')}
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-stone-700 mb-2">{t('currency')}</label>
@@ -1698,6 +1851,15 @@ const CartFilter = () => {
                       >
                         <div>
                           <p className="text-sm font-medium text-stone-800">{item.name}</p>
+                          {item.quantity && item.unitPrice && (
+                            <p className="text-xs text-stone-500">
+                              {item.quantity} ×{' '}
+                              {new Intl.NumberFormat(locale, {
+                                style: 'currency',
+                                currency: formData.currency
+                              }).format(item.unitPrice)}
+                            </p>
+                          )}
                           <p className="text-xs text-stone-500">
                             {t(item.type)}
                             {item.linkedTo ? ` · ${item.linkedTo}` : ''}
@@ -1773,7 +1935,12 @@ const CartFilter = () => {
               <div className="flex gap-2 mt-5">
                 <button
                   onClick={handleAddReceipt}
-                  disabled={receiptSaving || totalSpentSek <= 0}
+                  disabled={
+                    receiptSaving
+                    || totalSpentSek <= 0
+                    || formData.dateNeedsConfirmation
+                    || !formData.date
+                  }
                   className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-3 rounded-full transition"
                 >
                   {receiptSaving ? t('savingReceipt') : t('saveReceipt')}

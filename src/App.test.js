@@ -134,6 +134,97 @@ test('does not save the same receipt twice', async () => {
   expect(mockSetDoc).not.toHaveBeenCalled();
 });
 
+test('counts unique shopping days and saves the selected limit', async () => {
+  const startOfWeek = new Date();
+  const daysSinceMonday = (startOfWeek.getDay() + 6) % 7;
+  startOfWeek.setDate(startOfWeek.getDate() - daysSinceMonday);
+  startOfWeek.setHours(12, 0, 0, 0);
+  const secondShoppingDay = new Date(startOfWeek);
+  secondShoppingDay.setDate(secondShoppingDay.getDate() + 1);
+  const firstDate = startOfWeek.toISOString().split('T')[0];
+  const secondDate = secondShoppingDay.toISOString().split('T')[0];
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('receipts')) {
+      callback({
+        docs: [
+          {
+            id: 'receipt-1',
+            data: () => ({
+              merchant: 'ICA',
+              date: firstDate,
+              currency: 'SEK',
+              items: [],
+              lineItems: [],
+              totalSek: 100
+            })
+          },
+          {
+            id: 'receipt-2',
+            data: () => ({
+              merchant: 'Lidl',
+              date: secondDate,
+              currency: 'SEK',
+              items: [],
+              lineItems: [],
+              totalSek: 200
+            })
+          }
+        ]
+      });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+
+  expect(await screen.findByText(/shopping days: 2 \/ 3/i)).toBeInTheDocument();
+  expect(screen.getByText(/stores visited: 2/i)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/maximum shopping days per week/i), {
+    target: { value: '2' }
+  });
+
+  expect(await screen.findByText(/reached your planned shopping days/i)).toBeInTheDocument();
+  await waitFor(() => {
+    expect(window.localStorage.getItem('cartfilter-weekly-shopping-days-user-1')).toBe('2');
+  });
+});
+
+test('requires confirmation when OCR cannot detect a receipt date', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    callback({ docs: [] });
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /import receipt/i }));
+  fireEvent.change(screen.getByPlaceholderText(/paste ocr text here/i), {
+    target: {
+      value: `ICA Kvantum
+Org. nr: 556000-0000
+MJÖLK 20,00
+Totalt 1 varor
+Totalt 20,00 SEK`
+    }
+  });
+  fireEvent.click(screen.getByRole('button', { name: /parse receipt text/i }));
+
+  expect(await screen.findByText(/receipt date was not detected/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /save receipt/i })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole('button', { name: /confirm date/i }));
+  expect(screen.getByRole('button', { name: /save receipt/i })).toBeEnabled();
+});
+
 test('removes repeated OCR noise from a known merchant name', () => {
   const parsed = parseReceiptText(
     `ICA Kvantum Teleborg eee
@@ -276,6 +367,67 @@ TOTALBELOPP SEK 83,46`;
     snacks: 53.56,
     fruits: 29.9
   });
+});
+
+test('parses ICA quantities, unit prices, and product-linked discounts', () => {
+  const parsed = parseReceiptText(
+    `ICA Kvantum Teleborg
+2026-07-21 19:38
+Org.nr. 559026-1367
+*Kvarg vanilj 0.2% 83,64 kr
+2 each * SEK 41.82/each
+Mild kvarg 30kr/st -23,64 kr
+Kvarg vanilj Lfri 42,45 kr`,
+    '2026-07-31'
+  );
+
+  expect(parsed.total).toBe(102.45);
+  expect(parsed.lineItems).toHaveLength(3);
+  expect(parsed.lineItems[0]).toEqual(expect.objectContaining({
+    name: '*Kvarg vanilj 0.2%',
+    quantity: 2,
+    unitPrice: 41.82,
+    amount: 83.64,
+    categoryKey: 'dairy',
+    type: 'product'
+  }));
+  expect(parsed.lineItems[1]).toEqual(expect.objectContaining({
+    name: 'Mild kvarg 30kr/st',
+    amount: -23.64,
+    categoryKey: 'dairy',
+    type: 'discount',
+    linkedTo: '*Kvarg vanilj 0.2%'
+  }));
+  expect(parsed.items).toEqual([
+    expect.objectContaining({ key: 'dairy', amount: 102.45 })
+  ]);
+});
+
+test('parses quantity details for unrelated grocery products', () => {
+  const parsed = parseReceiptText(
+    `Coop
+2026-07-30
+Org. nr: 556000-0000
+PASTA 37,00
+2 st x 18,50/st
+APELSIN 45,00
+3 x 15,00`,
+    '2026-07-31'
+  );
+
+  expect(parsed.lineItems[0]).toEqual(expect.objectContaining({
+    name: 'PASTA',
+    quantity: 2,
+    unitPrice: 18.5,
+    amount: 37
+  }));
+  expect(parsed.lineItems[1]).toEqual(expect.objectContaining({
+    name: 'APELSIN',
+    quantity: 3,
+    unitPrice: 15,
+    amount: 45
+  }));
+  expect(parsed.total).toBe(82);
 });
 
 test('reuses a remembered category and treats price reduction as a discount', () => {
