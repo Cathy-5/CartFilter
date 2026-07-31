@@ -869,6 +869,8 @@ const CartFilter = () => {
   const [weeklyBudgetOwner, setWeeklyBudgetOwner] = useState('');
   const [weeklyShoppingDayLimit, setWeeklyShoppingDayLimit] = useState(3);
   const [weeklyShoppingDayOwner, setWeeklyShoppingDayOwner] = useState('');
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [settingsOwner, setSettingsOwner] = useState('');
 
   const [formData, setFormData] = useState({
     merchant: '',
@@ -921,6 +923,8 @@ const CartFilter = () => {
     if (!user) {
       setShoppingList([]);
       setShoppingListOwner('');
+      setSettingsLoaded(false);
+      setSettingsOwner('');
       return;
     }
 
@@ -934,6 +938,42 @@ const CartFilter = () => {
     }
     setShoppingListOwner(user.uid);
   }, [user]);
+
+  // Loads budget, shopping frequency, and shopping list settings from Firestore.
+  useEffect(() => {
+    if (!user) return undefined;
+
+    const settingsRef = doc(db, 'users', user.uid, 'settings', 'preferences');
+    return onSnapshot(settingsRef, (snapshot) => {
+      const settings = snapshot?.exists?.() ? snapshot.data() : null;
+      if (settings) {
+        if (Number.isFinite(Number(settings.weeklyBudgetSek))) {
+          setWeeklyBudgetSek(Number(settings.weeklyBudgetSek));
+        }
+        if (Number.isFinite(Number(settings.weeklyShoppingDayLimit))) {
+          setWeeklyShoppingDayLimit(Number(settings.weeklyShoppingDayLimit));
+        }
+        if (Array.isArray(settings.shoppingList)) {
+          setShoppingList(settings.shoppingList);
+        }
+      }
+      setSettingsOwner(user.uid);
+      setSettingsLoaded(true);
+    });
+  }, [user]);
+
+  // Saves synchronized settings so the user can restore them on another device.
+  useEffect(() => {
+    if (!user || !settingsLoaded || settingsOwner !== user.uid) return;
+    Promise.resolve(setDoc(doc(db, 'users', user.uid, 'settings', 'preferences'), {
+      weeklyBudgetSek: Number(weeklyBudgetSek) || 0,
+      weeklyShoppingDayLimit: Number(weeklyShoppingDayLimit) || 1,
+      shoppingList,
+      updatedAt: serverTimestamp()
+    }, { merge: true })).catch((error) => {
+      console.error('Failed to save CartFilter settings', error);
+    });
+  }, [shoppingList, weeklyBudgetSek, weeklyShoppingDayLimit, settingsLoaded, settingsOwner, user]);
 
   useEffect(() => {
     if (!user || shoppingListOwner !== user.uid) return;

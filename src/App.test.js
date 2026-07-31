@@ -131,7 +131,7 @@ test('does not save the same receipt twice', async () => {
   fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
 
   expect(await screen.findByText(/already saved in history/i)).toBeInTheDocument();
-  expect(mockSetDoc).not.toHaveBeenCalled();
+  expect(mockSetDoc.mock.calls.some(([docRef]) => docRef.path?.includes('receipts'))).toBe(false);
 });
 
 test('counts unique shopping days and saves the selected limit', async () => {
