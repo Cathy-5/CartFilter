@@ -134,6 +134,7 @@ const TRANSLATIONS = {
     signInError: 'Google sign-in did not complete. Please try again.',
     receiptLoadError: 'Your saved receipts could not be loaded. Check the Firestore rules and try again.',
     receiptSaveError: 'The receipt could not be saved. Please try again.',
+    receiptSaveTakingLonger: 'Saving is taking longer than expected. Check your receipt history before trying again.',
     receiptSaveBlocked: 'Add a date and total, then confirm any receipt warnings before saving.',
     duplicateReceipt: 'Already saved in history.',
     deleteReceipt: 'Remove receipt',
@@ -374,6 +375,7 @@ const TRANSLATIONS = {
     signInError: 'Google-inloggningen slutfordes inte. Forsok igen igen.',
     receiptLoadError: 'Dina sparade kvitton kunde inte laddas. Kontrollera Firestore-reglerna och forsok igen.',
     receiptSaveError: 'Kvittot kunde inte sparas. Forsok igen.',
+    receiptSaveTakingLonger: 'Sparandet tar langre tid an vantat. Kontrollera historiken innan du forsoker igen.',
     receiptSaveBlocked: 'Lägg till datum och totalsumma och bekräfta eventuella kvittovarningar innan du sparar.',
     duplicateReceipt: 'Redan sparat i historiken.',
     deleteReceipt: 'Ta bort kvitto',
@@ -645,7 +647,7 @@ const CATEGORY_RULES = [
   { key: 'beverages', score: 3, pattern: /\bzero\b/i }
 ];
 
-const RECEIPT_TOTAL_LABEL_PATTERN = /^(?:total\s+ttc|net\s+ttc(?:\s+eur)?|a\s+payer|montant\s+total|att\s+betala|totalbelopp|amount\s+due|kopbelopp|totalt|summa|total)\b/i;
+const RECEIPT_TOTAL_LABEL_PATTERN = /^(?:total\s+ttc|net\s+ttc(?:\s+eur)?|a\s+payer|montant\s+total|att\s+betala|totalbelopp|amount\s+due|loyalty\s+amount|kopbelopp|totalt|summa|total)\b/i;
 const RECEIPT_NON_PRODUCT_PATTERN = /^(?:tva|vat|h\.?\s*t\.?|tax|moms|total\s+ht|subtotal|sous[-\s]?total|card|carte|cash|especes|change|rendu|monnaie|mastercard|visa|payment|paiement|betalat|kort|kop|köp|avrundning|rounding)\b/i;
 const RECEIPT_AMOUNT_END_PATTERN = /(-?\d+[.,]\d{2})(?:\s*(?:sek|kr|eur|usd|€|\$))?(?:\s*[a-c])?$/i;
 
@@ -800,7 +802,8 @@ const normalizeForMatching = (value) => String(value || '')
 // Identifies a printed receipt total without confusing subtotals or tax totals for it.
 const isPrintedTotalLine = (line) => {
   const normalized = normalizeForMatching(line).trim();
-  return RECEIPT_TOTAL_LABEL_PATTERN.test(normalized)
+  return !/^total\s+discount\b/i.test(normalized)
+    && RECEIPT_TOTAL_LABEL_PATTERN.test(normalized)
     && !/^total\s+ht\b/i.test(normalized)
     && RECEIPT_AMOUNT_END_PATTERN.test(line);
 };
@@ -2652,15 +2655,26 @@ const CartFilter = () => {
         fingerprint: receiptId,
         createdAt: serverTimestamp()
       });
-      await Promise.race([
+      const saveCompleted = await Promise.race([
         saveReceiptPromise,
-        new Promise((_, reject) => {
+        new Promise((resolve) => {
           window.setTimeout(
-            () => reject(new Error('Receipt save timed out')),
+            () => resolve(false),
             RECEIPT_SAVE_TIMEOUT_MS
           );
         })
       ]);
+
+      // A slow request may still succeed; leave the form and show history instead of
+      // inviting a second click that could create a confusing duplicate message.
+      if (saveCompleted === false) {
+        setReceiptNotice(t('receiptSaveTakingLonger'));
+        resetForm();
+        setShowForm(false);
+        setReceiptSaving(false);
+        setActiveModule('receipts');
+        return;
+      }
 
       // Remember corrections after saving; this is helpful but not essential to this save.
       const aliasUpdates = formData.lineItems
