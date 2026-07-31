@@ -1,7 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import CartFilter, { parseReceiptText } from './CartFilter';
+import CartFilter, {
+  getCategoryRankColor,
+  getReceiptFileKind,
+  isLikelyBlurryReceiptImageData,
+  isLowResolutionReceiptImage,
+  getShoppingDaysStatus,
+  getWeeklyBudgetStatus,
+  parseReceiptText
+} from './CartFilter';
 
 const mockSignInWithPopup = jest.fn();
+const mockSignOut = jest.fn();
 const mockOnAuthStateChanged = jest.fn();
 const mockOnSnapshot = jest.fn();
 const mockSetDoc = jest.fn();
@@ -15,7 +24,7 @@ jest.mock('firebase/auth', () => ({
   GoogleAuthProvider: jest.fn(),
   onAuthStateChanged: (...args) => mockOnAuthStateChanged(...args),
   signInWithPopup: (...args) => mockSignInWithPopup(...args),
-  signOut: jest.fn()
+  signOut: (...args) => mockSignOut(...args)
 }));
 
 jest.mock('firebase/firestore', () => ({
@@ -33,6 +42,47 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
+test('uses distinct colors for ranked spending categories', () => {
+  const colors = Array.from({ length: 14 }, (_, index) => getCategoryRankColor(index));
+
+  expect(new Set(colors)).toHaveProperty('size', 14);
+  expect(colors[0]).not.toBe(colors[1]);
+});
+
+test.each([
+  [1, 3, 'on-track', 'on-track'],
+  [2, 3, 'getting-close', 'close'],
+  [3, 3, 'reached', 'reached'],
+  [4, 3, 'over', 'over'],
+  [5, 3, 'significantly-over', 'critical'],
+  [0, 0, 'not-set', 'neutral']
+])(
+  'maps %s of %s shopping days to %s',
+  (used, limit, expectedKey, expectedTone) => {
+    expect(getShoppingDaysStatus(used, limit)).toEqual(
+      expect.objectContaining({ key: expectedKey, tone: expectedTone })
+    );
+  }
+);
+
+test.each([
+  [0, 0, 'not-set', 'neutral'],
+  [639, 800, 'on-track', 'on-track'],
+  [640, 800, 'getting-close', 'close'],
+  [799.99, 800, 'getting-close', 'close'],
+  [800, 800, 'reached', 'reached'],
+  [801, 800, 'over', 'over'],
+  [959.99, 800, 'over', 'over'],
+  [960, 800, 'significantly-over', 'critical']
+])(
+  'maps SEK %s spent from SEK %s to %s',
+  (spent, budget, expectedKey, expectedTone) => {
+    expect(getWeeklyBudgetStatus(spent, budget)).toEqual(
+      expect.objectContaining({ key: expectedKey, tone: expectedTone })
+    );
+  }
+);
+
 test('renders localized receipt import after firebase sign in', async () => {
   mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
     callback(null);
@@ -41,8 +91,11 @@ test('renders localized receipt import after firebase sign in', async () => {
 
   mockSignInWithPopup.mockImplementation(async (authArg, provider) => {
     const authCallback = mockOnAuthStateChanged.mock.calls[0][1];
-    authCallback({ email: 'user@example.com', uid: 'user-1' });
-    return { user: { email: 'user@example.com', uid: 'user-1' }, provider };
+    authCallback({ displayName: 'Cathy Wu', email: 'user@example.com', uid: 'user-1' });
+    return {
+      user: { displayName: 'Cathy Wu', email: 'user@example.com', uid: 'user-1' },
+      provider
+    };
   });
   mockOnSnapshot.mockImplementation((receiptQuery, callback) => {
     callback({ docs: [] });
@@ -54,11 +107,157 @@ test('renders localized receipt import after firebase sign in', async () => {
   fireEvent.click(screen.getByRole('button', { name: /sign in with google/i }));
 
   await waitFor(() => {
-    expect(screen.getByRole('heading', { name: /cartfilter/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: /cartfilter/i })).toBeInTheDocument();
   });
 
-  expect(screen.getByRole('button', { name: /import receipt/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /scan or upload receipt/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /account: cathy/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /welcome to cartfilter, cathy/i })).toBeInTheDocument();
+  expect(screen.queryByText('user@example.com')).not.toBeInTheDocument();
   expect(mockSignInWithPopup).toHaveBeenCalled();
+});
+
+test('restores the preferred name from Firestore and uses it in the greeting', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ displayName: 'Google Name', email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('settings')) {
+      callback({
+        exists: () => true,
+        data: () => ({
+          preferredName: 'Mina Andersson',
+          weeklyBudgetSek: 800,
+          weeklyShoppingDayLimit: 3,
+          shoppingList: []
+        })
+      });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+
+  expect(await screen.findByRole('button', { name: /account: mina/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', {
+    name: /welcome to cartfilter, mina/i
+  })).toBeInTheDocument();
+  expect(window.localStorage.getItem('cartfilter-preferred-name-user-1')).toBe(
+    'Mina Andersson'
+  );
+});
+
+test('edits and validates the preferred name from the account menu', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ displayName: 'Cathy Wu', email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('settings')) {
+      callback({ exists: () => false });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+  mockSetDoc.mockResolvedValue();
+
+  render(<CartFilter />);
+
+  fireEvent.click(await screen.findByRole('button', { name: /account: cathy/i }));
+  expect(screen.getByText('user@example.com')).toBeInTheDocument();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByText('user@example.com')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /account: cathy/i }));
+  fireEvent.click(screen.getByRole('button', { name: /edit name/i }));
+
+  const nameInput = screen.getByRole('textbox', { name: /preferred name/i });
+  fireEvent.change(nameInput, { target: { value: '   ' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  expect(screen.getByRole('alert')).toHaveTextContent(/enter a name/i);
+
+  fireEvent.change(nameInput, { target: { value: 'Mina Andersson' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  expect(await screen.findByRole('status')).toHaveTextContent(/name saved/i);
+  expect(screen.getByRole('button', { name: /account: mina/i })).toBeInTheDocument();
+  expect(window.localStorage.getItem('cartfilter-preferred-name-user-1')).toBe(
+    'Mina Andersson'
+  );
+  await waitFor(() => {
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.arrayContaining(['users', 'user-1', 'settings', 'preferences'])
+      }),
+      expect.objectContaining({ preferredName: 'Mina Andersson' }),
+      { merge: true }
+    );
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /account: mina/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^sign out$/i }));
+  expect(mockSignOut).toHaveBeenCalled();
+});
+
+test('shows a returning greeting only after receipt history loads', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ displayName: 'Alex Smith', email: 'alex@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('settings')) {
+      callback({ exists: () => false });
+    } else if (queryRef.path?.includes('receipts')) {
+      callback({
+        docs: [{
+          id: 'receipt-1',
+          data: () => ({
+            merchant: 'ICA',
+            date: '2026-07-31',
+            currency: 'SEK',
+            items: [],
+            lineItems: [],
+            totalSek: 100
+          })
+        }]
+      });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+
+  expect(await screen.findByRole('heading', {
+    name: /welcome back, alex/i
+  })).toBeInTheDocument();
+  expect(screen.queryByText(/welcome to cartfilter, alex/i)).not.toBeInTheDocument();
+});
+
+test('uses a neutral account label when Google provides no display name', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    if (queryRef.path?.includes('settings')) {
+      callback({ exists: () => false });
+    } else {
+      callback({ docs: [] });
+    }
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+
+  expect(await screen.findByRole('button', { name: /^account: account$/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', {
+    name: /^welcome to cartfilter$/i
+  })).toBeInTheDocument();
 });
 
 test('saves a receipt under the signed-in user', async () => {
@@ -74,11 +273,14 @@ test('saves a receipt under the signed-in user', async () => {
 
   render(<CartFilter />);
 
-  fireEvent.click(screen.getByRole('button', { name: /import receipt/i }));
+  fireEvent.click(screen.getByRole('button', { name: /scan or upload receipt/i }));
   const receiptAmountInput = screen
     .getAllByRole('spinbutton')
     .find((input) => input.getAttribute('step') === '0.01');
   fireEvent.change(receiptAmountInput, { target: { value: '49.90' } });
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
   fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
 
   await waitFor(() => {
@@ -123,11 +325,14 @@ test('does not save the same receipt twice', async () => {
   });
 
   render(<CartFilter />);
-  fireEvent.click(screen.getByRole('button', { name: /import receipt/i }));
+  fireEvent.click(screen.getByRole('button', { name: /scan or upload receipt/i }));
   const receiptAmountInput = screen
     .getAllByRole('spinbutton')
     .find((input) => input.getAttribute('step') === '0.01');
   fireEvent.change(receiptAmountInput, { target: { value: '49.90' } });
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
   fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
 
   expect(await screen.findByText(/already saved in history/i)).toBeInTheDocument();
@@ -183,13 +388,16 @@ test('counts unique shopping days and saves the selected limit', async () => {
 
   render(<CartFilter />);
 
-  expect(await screen.findByText(/shopping days: 2 \/ 3/i)).toBeInTheDocument();
-  expect(screen.getByText(/stores visited: 2/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^shopping days$/i }));
+  expect(await screen.findByText(/shopping days used/i)).toHaveTextContent(
+    /2 of 3 shopping days used/i
+  );
+  expect(screen.getByText(/stores visited:/i)).toHaveTextContent(/stores visited: 2/i);
   fireEvent.change(screen.getByLabelText(/maximum shopping days per week/i), {
     target: { value: '2' }
   });
 
-  expect(await screen.findByText(/reached your planned shopping days/i)).toBeInTheDocument();
+  expect(await screen.findByText(/plan reached for this week/i)).toBeInTheDocument();
   await waitFor(() => {
     expect(window.localStorage.getItem('cartfilter-weekly-shopping-days-user-1')).toBe('2');
   });
@@ -206,7 +414,7 @@ test('requires confirmation when OCR cannot detect a receipt date', async () => 
   });
 
   render(<CartFilter />);
-  fireEvent.click(screen.getByRole('button', { name: /import receipt/i }));
+  fireEvent.click(screen.getByRole('button', { name: /scan or upload receipt/i }));
   fireEvent.change(screen.getByPlaceholderText(/paste ocr text here/i), {
     target: {
       value: `ICA Kvantum
@@ -223,6 +431,171 @@ Totalt 20,00 SEK`
 
   fireEvent.click(screen.getByRole('button', { name: /confirm date/i }));
   expect(screen.getByRole('button', { name: /save receipt/i })).toBeEnabled();
+});
+
+test('lets users edit, add, and delete receipt rows before saving corrections', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    callback({ docs: [] });
+    return jest.fn();
+  });
+  mockSetDoc.mockResolvedValue();
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /scan or upload receipt/i }));
+  fireEvent.change(screen.getByPlaceholderText(/paste ocr text here/i), {
+    target: {
+      value: `ICA
+Org. nr: 556000-0000
+MJÖLK 20,00
+Totalt 2 varor
+Totalt 35,00 SEK
+2026-07-31`
+    }
+  });
+  fireEvent.click(screen.getByRole('button', { name: /parse receipt text/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    /items differ from the receipt total by.*15/i
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: /add missing item/i }));
+  const itemNameInputs = screen.getAllByLabelText(/^item name:/i);
+  const lineTotalInputs = screen.getAllByLabelText(/^line total:/i);
+  fireEvent.change(itemNameInputs[1], { target: { value: 'Bread' } });
+  fireEvent.change(lineTotalInputs[1], { target: { value: '15.00' } });
+  expect(screen.queryByText(/items differ from the receipt total by/i)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /remove item: bread/i }));
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    /items differ from the receipt total by.*15/i
+  );
+
+  fireEvent.change(screen.getByLabelText(/item name: mjölk/i), {
+    target: { value: 'Milk' }
+  });
+  fireEvent.change(screen.getByLabelText(/line total: milk/i), {
+    target: { value: '35.00' }
+  });
+  expect(screen.queryByText(/items differ from the receipt total by/i)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+  fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
+
+  await waitFor(() => {
+    const receiptSave = mockSetDoc.mock.calls.find(([documentRef]) => (
+      documentRef.path?.includes('receipts')
+    ));
+    expect(receiptSave?.[1]).toEqual(expect.objectContaining({
+      lineItems: [
+        expect.objectContaining({
+          name: 'Milk',
+          originalName: 'MJÖLK',
+          amount: 35
+        })
+      ],
+      unmatchedAmount: 0
+    }));
+  });
+  expect(mockSetDoc.mock.calls.some(([documentRef]) => (
+    documentRef.path?.includes('productAliases')
+  ))).toBe(true);
+});
+
+test('requires resolving a printed-total mismatch and supports using the receipt total', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    callback({ docs: [] });
+    return jest.fn();
+  });
+  mockSetDoc.mockResolvedValue();
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /scan or upload receipt/i }));
+  fireEvent.change(screen.getByPlaceholderText(/paste ocr text here/i), {
+    target: {
+      value: `Local Market
+Org. nr: 556000-0000
+Milk 20,00
+Total 35,00 SEK
+2026-07-31`
+    }
+  });
+  fireEvent.click(screen.getByRole('button', { name: /parse receipt text/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+
+  expect(screen.getByRole('button', { name: /use receipt total/i })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /use receipt total/i }));
+  expect(screen.queryByText(/items differ from the receipt total by/i)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+  expect(screen.getByRole('button', { name: /save receipt/i })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
+
+  await waitFor(() => {
+    const receiptSave = mockSetDoc.mock.calls.find(([documentRef]) => (
+      documentRef.path?.includes('receipts')
+    ));
+    expect(receiptSave?.[1].lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'reconciliation',
+        amount: 15,
+        confidence: 'user'
+      })
+    ]));
+  });
+});
+
+test('allows a receipt to be entered and saved when automatic reading is unavailable', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((queryRef, callback) => {
+    callback({ docs: [] });
+    return jest.fn();
+  });
+  mockSetDoc.mockResolvedValue();
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /scan or upload receipt/i }));
+  expect(screen.getByLabelText(/choose receipt file/i)).toHaveAttribute(
+    'accept',
+    expect.stringContaining('.pdf')
+  );
+  expect(screen.getByLabelText(/take photo/i)).toHaveAttribute('capture', 'environment');
+  fireEvent.click(screen.getByRole('button', { name: /enter manually/i }));
+  expect(screen.getByText(/could not read this receipt reliably/i)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+  fireEvent.change(screen.getByLabelText(/item name:/i), {
+    target: { value: 'Bread' }
+  });
+  fireEvent.change(screen.getByLabelText(/line total: bread/i), {
+    target: { value: '24.50' }
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^next/i }));
+
+  expect(screen.getByRole('button', { name: /save receipt/i })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
+  await waitFor(() => {
+    const receiptSave = mockSetDoc.mock.calls.find(([documentRef]) => (
+      documentRef.path?.includes('receipts')
+    ));
+    expect(receiptSave?.[1]).toEqual(expect.objectContaining({
+      totalSek: 24.5,
+      lineItems: [
+        expect.objectContaining({ name: 'Bread', amount: 24.5 })
+      ]
+    }));
+  });
 });
 
 test('removes repeated OCR noise from a known merchant name', () => {
@@ -326,9 +699,9 @@ Totalt 186,89 SEK
     beverages: 26.3,
     deposit: 4,
     snacks: 28,
-    meat: 89.9,
-    other: 38.69
+    meat: 89.9
   });
+  expect(parsed.unmatchedAmount).toBe(38.69);
   expect(parsed.lineItems[0].name).toContain('COLA SOCKERFRI 2L');
   expect(parsed.lineItems[0].categoryKey).toBe('beverages');
 });
@@ -436,7 +809,7 @@ Totalt 41,71 SEK`,
   }));
 });
 
-test('adds an explicit reconciliation line when OCR misses part of the paid total', () => {
+test('keeps a missing amount unresolved instead of inventing a product', () => {
   const parsed = parseReceiptText(
     `Willys
 Org. nr: 556163-2232
@@ -449,12 +822,57 @@ Totalt 35,00 SEK`,
 
   expect(parsed.total).toBe(35);
   expect(parsed.unmatchedAmount).toBe(15);
-  expect(reconciliation).toEqual(expect.objectContaining({
-    amount: 15,
-    categoryKey: 'other',
-    confidence: 'needs-review'
-  }));
-  expect(parsed.items.reduce((sum, item) => sum + item.amount, 0)).toBe(35);
+  expect(reconciliation).toBeUndefined();
+  expect(parsed.items.reduce((sum, item) => sum + item.amount, 0)).toBe(20);
+});
+
+test('keeps a known unsupported total label out of product rows', () => {
+  const parsed = parseReceiptText(
+    `Le Bistrot des Arts
+Siret : 50350097500018 NAF 5610A
+Coffee 5,00
+NET TTC EUR 5,00`,
+    '2026-07-31'
+  );
+
+  expect(parsed.total).toBe(5);
+  expect(parsed.lineItems).toHaveLength(1);
+  expect(parsed.lineItems.map((item) => item.name)).not.toContain('NET TTC EUR');
+});
+
+test('flags low-resolution receipt image dimensions', () => {
+  expect(isLowResolutionReceiptImage(262, 450)).toBe(true);
+  expect(isLowResolutionReceiptImage(1200, 1800)).toBe(false);
+});
+
+test.each([
+  ['receipt.pdf', 'application/pdf', 'pdf'],
+  ['receipt.HEIC', '', 'heic'],
+  ['receipt.avif', 'image/avif', 'image'],
+  ['receipt.bmp', 'image/bmp', 'image'],
+  ['receipt.csv', 'text/csv', 'unsupported']
+])('maps %s to the %s preparation path', (name, type, expectedKind) => {
+  expect(getReceiptFileKind(new File(['receipt'], name, { type }))).toBe(expectedKind);
+});
+
+test('warns for a flat blurry image but not a high-contrast receipt pattern', () => {
+  const width = 12;
+  const height = 12;
+  const flatPixels = new Uint8ClampedArray(width * height * 4).fill(180);
+  const sharpPixels = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const value = (x + y) % 2 === 0 ? 0 : 255;
+      sharpPixels[offset] = value;
+      sharpPixels[offset + 1] = value;
+      sharpPixels[offset + 2] = value;
+      sharpPixels[offset + 3] = 255;
+    }
+  }
+
+  expect(isLikelyBlurryReceiptImageData(flatPixels, width, height)).toBe(true);
+  expect(isLikelyBlurryReceiptImageData(sharpPixels, width, height)).toBe(false);
 });
 
 test('parses Lidl VAT markers and stops before the payment section', () => {
@@ -620,28 +1038,32 @@ test('builds a simple shopping list from common-item templates', async () => {
     return jest.fn();
   });
 
-  render(<CartFilter />);
+  const { container } = render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /^shopping list$/i }));
   fireEvent.click(screen.getByRole('button', { name: /add weekly basics/i }));
 
   expect(screen.getByText('Milk')).toBeInTheDocument();
   expect(screen.getByText('Eggs')).toBeInTheDocument();
   expect(screen.getByText('Bread')).toBeInTheDocument();
+  expect(screen.getByText(/9 to buy/i)).toBeInTheDocument();
+  expect(screen.queryByText(/estimated price: milk/i)).not.toBeInTheDocument();
+  expect(container.querySelector('.shopping-list-rows')).toHaveAttribute('tabindex', '0');
   expect(JSON.parse(window.localStorage.getItem('cartfilter-shopping-list-user-1'))).toHaveLength(9);
 
   fireEvent.change(screen.getByPlaceholderText(/milk, tomatoes, rice/i), {
     target: { value: 'Mjölk' }
   });
-  fireEvent.click(screen.getByRole('button', { name: /^add item$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
   expect(screen.queryByText('Mjölk')).not.toBeInTheDocument();
   expect(JSON.parse(window.localStorage.getItem('cartfilter-shopping-list-user-1'))).toHaveLength(9);
 
   fireEvent.change(screen.getByPlaceholderText(/milk, tomatoes, rice/i), {
     target: { value: 'Royal Rolls Vanilj' }
   });
-  fireEvent.change(screen.getByRole('combobox', { name: /item category/i }), {
+  fireEvent.change(screen.getByRole('combobox', { name: /^category$/i }), {
     target: { value: 'snacks' }
   });
-  fireEvent.click(screen.getByRole('button', { name: /^add item$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
 
   await waitFor(() => {
     expect(mockSetDoc).toHaveBeenCalledWith(
@@ -691,7 +1113,9 @@ test('prefills a learned shopping item with its receipt unit price', async () =>
   });
 
   render(<CartFilter />);
-  fireEvent.click(await screen.findByRole('button', { name: /\+ milk/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^shopping list$/i }));
+  fireEvent.click(screen.getByText(/^suggestions from your receipts$/i));
+  fireEvent.click(await screen.findByRole('button', { name: /^milk/i }));
 
   expect(screen.getByLabelText(/estimated price: milk/i)).toHaveValue(25);
   expect(screen.getByText(/^within budget$/i)).toBeInTheDocument();
@@ -708,6 +1132,7 @@ test('compares editable shopping estimates with the remaining weekly budget', as
   });
 
   render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /^shopping list$/i }));
   fireEvent.click(screen.getByRole('button', { name: /add weekly basics/i }));
   const milkPriceInput = screen.getByLabelText(/estimated price: milk/i);
 
