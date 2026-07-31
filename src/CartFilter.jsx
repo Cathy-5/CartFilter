@@ -56,6 +56,7 @@ const MAX_PDF_PAGES = 5;
 const MIN_RECEIPT_IMAGE_WIDTH = 650;
 const MIN_RECEIPT_IMAGE_HEIGHT = 800;
 const MIN_RECEIPT_IMAGE_PIXELS = 600000;
+const RECEIPT_SAVE_TIMEOUT_MS = 15000;
 const SUPPORTED_CURRENCIES = ['SEK', 'EUR', 'USD'];
 const RECEIPT_FILE_ACCEPT = [
   '.jpg',
@@ -2645,24 +2646,38 @@ const CartFilter = () => {
     setReceiptNotice('');
 
     try {
-      await Promise.all(
-        formData.lineItems
-          .filter((item) => (
-            item.type === 'product'
-            && item.originalName
-            && normalizeProductKey(item.originalName) !== normalizeProductKey(item.name)
-          ))
-          .map((item) => rememberProductAlias(
-            item.originalName,
-            item.name,
-            item.categoryKey
-          ))
-      );
-      await setDoc(doc(db, 'users', user.uid, 'receipts', receiptId), {
+      // Save the receipt first so slow correction-memory writes cannot block the user.
+      const saveReceiptPromise = setDoc(doc(db, 'users', user.uid, 'receipts', receiptId), {
         ...receiptToSave,
         fingerprint: receiptId,
         createdAt: serverTimestamp()
       });
+      await Promise.race([
+        saveReceiptPromise,
+        new Promise((_, reject) => {
+          window.setTimeout(
+            () => reject(new Error('Receipt save timed out')),
+            RECEIPT_SAVE_TIMEOUT_MS
+          );
+        })
+      ]);
+
+      // Remember corrections after saving; this is helpful but not essential to this save.
+      const aliasUpdates = formData.lineItems
+        .filter((item) => (
+          item.type === 'product'
+          && item.originalName
+          && normalizeProductKey(item.originalName) !== normalizeProductKey(item.name)
+        ))
+        .map((item) => rememberProductAlias(
+          item.originalName,
+          item.name,
+          item.categoryKey
+        ));
+      Promise.all(aliasUpdates).catch((error) => {
+        console.error('Failed to save product corrections after receipt save', error);
+      });
+
       resetForm();
       setShowForm(false);
     } catch (error) {
