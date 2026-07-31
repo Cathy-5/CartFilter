@@ -346,8 +346,17 @@ test('counts unique shopping days and saves the selected limit', async () => {
   startOfWeek.setHours(12, 0, 0, 0);
   const secondShoppingDay = new Date(startOfWeek);
   secondShoppingDay.setDate(secondShoppingDay.getDate() + 1);
-  const firstDate = startOfWeek.toISOString().split('T')[0];
-  const secondDate = secondShoppingDay.toISOString().split('T')[0];
+  const previousWeekDate = new Date(startOfWeek);
+  previousWeekDate.setDate(previousWeekDate.getDate() - 1);
+  const nextWeekDate = new Date(startOfWeek);
+  nextWeekDate.setDate(nextWeekDate.getDate() + 7);
+  const dateKey = (date) => [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
+  const firstDate = dateKey(startOfWeek);
+  const secondDate = dateKey(secondShoppingDay);
   mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
     callback({ email: 'user@example.com', uid: 'user-1' });
     return jest.fn();
@@ -377,6 +386,28 @@ test('counts unique shopping days and saves the selected limit', async () => {
               lineItems: [],
               totalSek: 200
             })
+          },
+          {
+            id: 'receipt-before-week',
+            data: () => ({
+              merchant: 'ICA',
+              date: dateKey(previousWeekDate),
+              currency: 'SEK',
+              items: [],
+              lineItems: [],
+              totalSek: 900
+            })
+          },
+          {
+            id: 'receipt-after-week',
+            data: () => ({
+              merchant: 'ICA',
+              date: dateKey(nextWeekDate),
+              currency: 'SEK',
+              items: [],
+              lineItems: [],
+              totalSek: 800
+            })
           }
         ]
       });
@@ -393,6 +424,9 @@ test('counts unique shopping days and saves the selected limit', async () => {
     /2 of 3 shopping days used/i
   );
   expect(screen.getByText(/stores visited:/i)).toHaveTextContent(/stores visited: 2/i);
+  fireEvent.click(screen.getByRole('button', { name: /^budget$/i }));
+  expect(await screen.findByText('SEK 300.00')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^shopping days$/i }));
   fireEvent.change(screen.getByLabelText(/maximum shopping days per week/i), {
     target: { value: '2' }
   });
@@ -430,6 +464,7 @@ Totalt 20,00 SEK`
   expect(screen.getByRole('button', { name: /save receipt/i })).toBeDisabled();
 
   fireEvent.click(screen.getByRole('button', { name: /confirm date/i }));
+  expect(screen.getByText(/date confirmed/i)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /save receipt/i })).toBeEnabled();
 });
 
@@ -647,12 +682,13 @@ Mottaget Kontokort 276,79
   expect(parsed.currency).toBe('SEK');
   expect(parsed.total).toBe(276.79);
   expect(categoryAmounts).toEqual({
-    beverages: 20,
+    beverages: 26.3,
     deposit: 6,
+    discount: -23.3,
     meat: 87.7,
     preparedMeals: 40.6,
     fruits: 39.9,
-    vegetables: 65.69,
+    vegetables: 82.69,
     snacks: 16.9
   });
   expect(parsed.lineItems.find((item) => item.name.includes('PANT'))).toEqual(
@@ -665,7 +701,7 @@ Mottaget Kontokort 276,79
   expect(parsed.lineItems.find((item) => item.name.includes('Rabatt:GURKA'))).toEqual(
     expect.objectContaining({
       type: 'discount',
-      categoryKey: 'vegetables',
+      categoryKey: 'discount',
       linkedTo: expect.stringContaining('GURKA')
     })
   );
@@ -698,8 +734,9 @@ Totalt 186,89 SEK
   expect(categoryAmounts).toEqual({
     beverages: 26.3,
     deposit: 4,
-    snacks: 28,
-    meat: 89.9
+    discount: -13.98,
+    snacks: 31.98,
+    meat: 99.9
   });
   expect(parsed.unmatchedAmount).toBe(38.69);
   expect(parsed.lineItems[0].name).toContain('COLA SOCKERFRI 2L');
@@ -767,7 +804,7 @@ Totalt 357,77 SEK
     expect.objectContaining({ amount: 34.9, categoryKey: 'preparedMeals' })
   );
   expect(parsed.lineItems.find((item) => item.type === 'discount' && item.linkedTo === 'CHEESEBURGARE 2P')).toEqual(
-    expect.objectContaining({ amount: -17.45, categoryKey: 'preparedMeals' })
+    expect.objectContaining({ amount: -17.45, categoryKey: 'discount' })
   );
   expect(depositReturn).toEqual(expect.objectContaining({
     name: 'PANTRETUR',
@@ -959,12 +996,13 @@ Kvarg vanilj Lfri 42,45 kr`,
   expect(parsed.lineItems[1]).toEqual(expect.objectContaining({
     name: 'Mild kvarg 30kr/st',
     amount: -23.64,
-    categoryKey: 'dairy',
+    categoryKey: 'discount',
     type: 'discount',
     linkedTo: '*Kvarg vanilj 0.2%'
   }));
   expect(parsed.items).toEqual([
-    expect.objectContaining({ key: 'dairy', amount: 102.45 })
+    expect.objectContaining({ key: 'dairy', amount: 126.09 }),
+    expect.objectContaining({ key: 'discount', amount: -23.64 })
   ]);
 });
 
@@ -1014,13 +1052,14 @@ Totalt 7,36 SEK`,
     type: 'product'
   }));
   expect(parsed.lineItems[1]).toEqual(expect.objectContaining({
-    categoryKey: 'snacks',
+    categoryKey: 'discount',
     type: 'discount',
     linkedTo: 'ROYAL ROLLS VANILJ',
     amount: -2
   }));
   expect(parsed.items).toEqual([
-    expect.objectContaining({ key: 'snacks', amount: 7.36 })
+    expect.objectContaining({ key: 'snacks', amount: 9.36 }),
+    expect.objectContaining({ key: 'discount', amount: -2 })
   ]);
 });
 
@@ -1041,12 +1080,12 @@ Totalt 37,90 SEK`,
     type: 'product'
   }));
   expect(parsed.lineItems[2]).toEqual(expect.objectContaining({
-    categoryKey: 'grains',
+    categoryKey: 'discount',
     type: 'discount',
     linkedTo: 'BROSCHE',
     amount: -5
   }));
-  expect(parsed.items.find((item) => item.key === 'grains').amount).toBe(19.9);
+  expect(parsed.items.find((item) => item.key === 'grains').amount).toBe(24.9);
 });
 
 test('builds a simple shopping list from common-item templates', async () => {

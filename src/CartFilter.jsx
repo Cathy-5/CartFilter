@@ -208,10 +208,15 @@ const TRANSLATIONS = {
     shoppingDayLimitExceeded: 'One extra shopping day this week.',
     shoppingDayLimitFarExceeded: 'You are two or more days over your plan.',
     receiptDateNotDetected: 'Receipt date was not detected. Please confirm it.',
+    confirmDateTitle: 'Is this receipt date correct?',
     confirmDate: 'Confirm date',
+    dateConfirmed: 'Date confirmed',
     receipts: 'Receipts',
     items: 'items',
     spendingByCategory: 'Spending by category',
+    categoryAnalysisOne: 'Based on this receipt.',
+    categoryAnalysisMany: 'Based on all saved receipts.',
+    categoriesCount: 'categories',
     largestShare: 'Largest share',
     recentReceipts: 'Recent receipts',
     homeFeatures: 'Your shopping dashboard',
@@ -443,10 +448,15 @@ const TRANSLATIONS = {
     shoppingDayLimitExceeded: 'En extra inköpsdag den här veckan.',
     shoppingDayLimitFarExceeded: 'Du ligger två eller fler dagar över planen.',
     receiptDateNotDetected: 'Kvittodatum kunde inte hittas. Bekräfta datumet.',
+    confirmDateTitle: 'Är detta kvittodatum korrekt?',
     confirmDate: 'Bekräfta datum',
+    dateConfirmed: 'Datum bekräftat',
     receipts: 'Kvitton',
     items: 'varor',
     spendingByCategory: 'Utgifter per kategori',
+    categoryAnalysisOne: 'Baserat på detta kvitto.',
+    categoryAnalysisMany: 'Baserat på alla sparade kvitton.',
+    categoriesCount: 'kategorier',
     largestShare: 'Störst andel',
     recentReceipts: 'Senaste kvitton',
     homeFeatures: 'Din shoppingöversikt',
@@ -651,6 +661,7 @@ const REVIEW_CATEGORY_KEYS = [
   'alcohol',
   'preparedMeals',
   'household',
+  'discount',
   'deposit',
   'depositReturn',
   'other'
@@ -729,6 +740,24 @@ const getStartOfWeek = (value = new Date()) => {
   date.setDate(date.getDate() - daysSinceMonday);
   date.setHours(0, 0, 0, 0);
   return date;
+};
+
+// Parses a receipt date without allowing timezone conversion to change its day.
+const parseReceiptDateLocal = (value) => {
+  if (!value) return null;
+  if (typeof value?.toDate === 'function') return value.toDate();
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : new Date(value);
+
+  const text = String(value).trim();
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    const date = new Date(Number(year), Number(month) - 1, Number(day));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 // Converts user or OCR input into a safe decimal number.
@@ -1170,12 +1199,7 @@ const refreshReceiptCategories = (
   };
   const lineItems = receipt.lineItems.map((item) => {
     if (item.confidence === 'user' || item.confidence === 'remembered') return item;
-    if (item.type === 'discount' && item.linkedTo) {
-      const linkedProduct = receipt.lineItems.find((candidate) => candidate.name === item.linkedTo);
-      return linkedProduct
-        ? { ...item, categoryKey: categoryForProduct(linkedProduct) }
-        : item;
-    }
+    if (item.type === 'discount') return { ...item, categoryKey: 'discount' };
     const categoryKey = categoryForProduct(item);
     const alias = productAliases[item.productKey || normalizeProductKey(item.name)];
     const aliasedName = item.type === 'product'
@@ -1391,7 +1415,7 @@ const parseReceiptText = (
       : (isDeposit
         ? 'deposit'
       : (isDiscount
-        ? linkedProduct?.categoryKey || directCategory
+        ? 'discount'
         : (rememberedCategory || directCategory)));
 
     const parsedLine = {
@@ -1515,6 +1539,7 @@ const CartFilter = () => {
     rawText: '',
     items: createEmptyItems(),
     dateNeedsConfirmation: false,
+    dateConfirmed: false,
     receiptTotal: 0,
     unmatchedAmount: 0,
     printedTotalDetected: false,
@@ -1904,10 +1929,27 @@ const CartFilter = () => {
     const totals = {};
 
     receipts.forEach((receipt) => {
-      receipt.items.forEach((item) => {
-        if (item.key === 'depositReturn') return;
+      const lineItems = Array.isArray(receipt.lineItems) && receipt.lineItems.length > 0
+        ? receipt.lineItems
+        : (receipt.items || []).map((item) => ({
+          ...item,
+          type: item.key === 'discount' ? 'discount' : 'product'
+        }));
+      lineItems.forEach((item) => {
+        if (item.type === 'deposit-return' || item.categoryKey === 'depositReturn') return;
+
+        let categoryKey = item.categoryKey || item.key;
+        if (item.type === 'discount' || categoryKey === 'discount') {
+          const linkedProduct = lineItems.find((candidate) => (
+            candidate.type === 'product'
+              && (candidate.name === item.linkedTo || candidate.productKey === item.linkedTo)
+          ));
+          categoryKey = linkedProduct?.categoryKey || null;
+        }
+        if (!categoryKey) return;
+
         const amountSek = normalizeToSek(item.amount, receipt.currency);
-        totals[item.key] = (totals[item.key] || 0) + amountSek;
+        totals[categoryKey] = (totals[categoryKey] || 0) + amountSek;
       });
     });
 
@@ -2049,8 +2091,8 @@ const CartFilter = () => {
   const startOfNextWeek = new Date(startOfThisWeek);
   startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
   const receiptsThisWeek = receipts.filter((receipt) => {
-    const receiptDate = new Date(`${receipt.date}T00:00:00`);
-    return !Number.isNaN(receiptDate.getTime())
+    const receiptDate = parseReceiptDateLocal(receipt.date);
+    return receiptDate
       && receiptDate >= startOfThisWeek
       && receiptDate < startOfNextWeek;
   });
@@ -2514,6 +2556,7 @@ const CartFilter = () => {
       lineItems: [],
       items: createEmptyItems(),
       dateNeedsConfirmation: false,
+      dateConfirmed: false,
       receiptTotal: 0,
       unmatchedAmount: 0,
       printedTotalDetected: false,
@@ -2671,6 +2714,7 @@ const CartFilter = () => {
       rawText: text,
       items: parsed.items,
       dateNeedsConfirmation: !parsed.dateDetected,
+      dateConfirmed: false,
       receiptTotal: parsed.total,
       unmatchedAmount: parsed.unmatchedAmount,
       printedTotalDetected: parsed.printedTotalDetected,
@@ -2804,6 +2848,7 @@ const CartFilter = () => {
           rawText: extractedText,
           items: parsed.items,
           dateNeedsConfirmation: !parsed.dateDetected,
+          dateConfirmed: false,
           receiptTotal: parsed.total,
           unmatchedAmount: parsed.unmatchedAmount,
           printedTotalDetected: parsed.printedTotalDetected,
@@ -3911,24 +3956,36 @@ const CartFilter = () => {
                     onChange={(event) => setFormData((current) => ({
                       ...current,
                       date: event.target.value,
-                      dateNeedsConfirmation: event.target.value ? false : current.dateNeedsConfirmation
+                      dateConfirmed: false
                     }))}
                     className="w-full border border-stone-300 rounded-2xl px-3 py-2"
                   />
                   {formData.dateNeedsConfirmation && (
-                    <div className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3">
-                      <p className="text-xs text-amber-900">{t('receiptDateNotDetected')}</p>
+                    <div className="receipt-date-confirmation" role="alert">
+                      <AlertTriangle aria-hidden="true" />
+                      <div>
+                        <strong>{t('confirmDateTitle')}</strong>
+                        <p>{t('receiptDateNotDetected')}</p>
+                      </div>
                       <button
                         type="button"
+                        disabled={!formData.date}
                         onClick={() => setFormData((current) => ({
                           ...current,
-                          dateNeedsConfirmation: false
+                          dateNeedsConfirmation: false,
+                          dateConfirmed: true
                         }))}
-                        className="mt-2 text-xs font-semibold text-amber-800 underline"
                       >
+                        <CheckCircle2 aria-hidden="true" />
                         {t('confirmDate')}
                       </button>
                     </div>
+                  )}
+                  {formData.dateConfirmed && (
+                    <p className="receipt-date-confirmed" role="status">
+                      <CheckCircle2 aria-hidden="true" />
+                      {t('dateConfirmed')}
+                    </p>
                   )}
                 </div>
                 <div>
@@ -4256,6 +4313,9 @@ const CartFilter = () => {
               <div className="chart-heading">
                 <div>
                   <h2 className="text-lg font-bold text-stone-900">{t('spendingByCategory')}</h2>
+                  <p className="analytics-scope">
+                    {receipts.length === 1 ? t('categoryAnalysisOne') : t('categoryAnalysisMany')}
+                  </p>
                   {largestChartCategory && (
                     <p className="largest-category-callout">
                       <span>{t('largestShare')}</span>
@@ -4340,13 +4400,18 @@ const CartFilter = () => {
                     </span>
                     <span className="receipt-row-total">
                       <strong>{receipt.displayTotal}</strong>
-                      <small>{receipt.items.length} {t('items')}</small>
+                      <small>
+                        {receipt.items.filter((item) => !['discount', 'deposit', 'depositReturn'].includes(item.key)).length}{' '}
+                        {t('categoriesCount')}
+                      </small>
                     </span>
                     <ChevronDown className="receipt-row-chevron" aria-hidden="true" />
                   </summary>
                   <div className="receipt-history-details">
                     <div className="receipt-category-list">
-                      {receipt.items.map((item, index) => (
+                      {receipt.items
+                        .filter((item) => !['discount', 'deposit', 'depositReturn'].includes(item.key))
+                        .map((item, index) => (
                         <div key={`${receipt.id}-${item.key}-${index}`}>
                           <span>{translatedCategoryLabel(item.key)}</span>
                           <strong>
