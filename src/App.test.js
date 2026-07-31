@@ -1149,3 +1149,82 @@ test('compares editable shopping estimates with the remaining weekly budget', as
     expect(storedList.find((item) => item.name === 'Milk').estimatedPriceSek).toBe(900);
   });
 });
+
+test('returns no receipt for empty or unrelated text', () => {
+  expect(parseReceiptText('   \n\t  ')).toBeNull();
+  expect(parseReceiptText('Hello from a normal note\nSee you tomorrow')).toBeNull();
+});
+
+test('parses comma decimals, quantity, unit price, and euro totals', () => {
+  const parsed = parseReceiptText(`
+    ICA
+    JUICE
+    2st*4,50 9,00
+    Totalt 1 varor
+    Totalt 9,00 EUR
+  `);
+
+  expect(parsed).toEqual(expect.objectContaining({
+    currency: 'EUR',
+    total: 9
+  }));
+  expect(parsed.lineItems).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      quantity: 2,
+      unitPrice: 4.5,
+      amount: 9
+    })
+  ]));
+  expect(parsed.lineItems[0].name).toMatch(/^JUICE/);
+});
+
+test('does not turn tax, payment, or total lines into products', () => {
+  const parsed = parseReceiptText(`
+    COOP
+    VAT 25,00
+    CASH 20,00
+    CHANGE 7,50
+    MILK 12,50
+    Total 12,50 SEK
+  `);
+
+  expect(parsed.lineItems).toEqual([
+    expect.objectContaining({ name: 'MILK', amount: 12.5 })
+  ]);
+});
+
+test('keeps status helpers safe for invalid user-entered numbers', () => {
+  expect(getShoppingDaysStatus('not-a-number', 3)).toEqual(
+    expect.objectContaining({ key: 'on-track' })
+  );
+  expect(getShoppingDaysStatus(-1, 3)).toEqual(
+    expect.objectContaining({ key: 'on-track' })
+  );
+  expect(getWeeklyBudgetStatus('not-a-number', 800)).toEqual(
+    expect.objectContaining({ key: 'on-track' })
+  );
+  expect(getWeeklyBudgetStatus(900, 'not-a-number')).toEqual(
+    expect.objectContaining({ key: 'not-set' })
+  );
+});
+
+test('does not add a shopping-list item when the user enters only whitespace', async () => {
+  mockOnAuthStateChanged.mockImplementation((authArg, callback) => {
+    callback({ email: 'user@example.com', uid: 'user-1' });
+    return jest.fn();
+  });
+  mockOnSnapshot.mockImplementation((receiptQuery, callback) => {
+    callback({ docs: [] });
+    return jest.fn();
+  });
+
+  render(<CartFilter />);
+  fireEvent.click(screen.getByRole('button', { name: /^shopping list$/i }));
+
+  const itemInput = screen.getByPlaceholderText(/milk, tomatoes, rice/i);
+  fireEvent.change(itemInput, { target: { value: '   ' } });
+  fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+  expect(screen.queryByText(/^   $/)).not.toBeInTheDocument();
+  expect(screen.getByPlaceholderText(/milk, tomatoes, rice/i)).toHaveValue('   ');
+});
