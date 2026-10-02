@@ -1,4 +1,4 @@
-# CartFilter
+# Cart X-Ray
 
 **Understand grocery spending. Plan before shopping. Stay within budget.**
 
